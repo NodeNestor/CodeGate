@@ -1,0 +1,22 @@
+FROM node:22-slim
+
+# Install basic tools
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ttyd from GitHub releases (not in Debian bookworm repos)
+RUN curl -sL https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64 -o /usr/local/bin/ttyd \
+    && chmod +x /usr/local/bin/ttyd
+
+# Install CLI tools (Claude Code + Codex)
+RUN npm install -g @anthropic-ai/claude-code @openai/codex
+
+WORKDIR /home/node
+USER node
+
+EXPOSE 7681
+
+CMD ["ttyd", "-W", "-p", "7681", "-t", "enableClipboard=true", "bash"]

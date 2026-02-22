@@ -1,0 +1,27 @@
+services:
+  proxy:
+    build: .
+    ports:
+      - "9211:9211"
+      - "9212:9212"
+    volumes:
+      - proxy-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${CLAUDE_DIR:-~/.claude}:/host-claude-rw
+    environment:
+      - MASTER_KEY=${MASTER_KEY:-auto}
+      - PROXY_API_KEY=${PROXY_API_KEY:-proxy-local-key}
+      - UI_PORT=9211
+      - PROXY_PORT=9212
+      - DOCKER_SOCKET=/var/run/docker.sock
+      - SESSION_NETWORK=code-proxy_proxy-net
+    restart: unless-stopped
+    networks:
+      - proxy-net
+
+volumes:
+  proxy-data:
+
+networks:
+  proxy-net:
+    driver: bridge
