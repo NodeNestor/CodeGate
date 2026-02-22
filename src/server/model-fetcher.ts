@@ -264,6 +264,24 @@ async function fetchModelsForAccount(
 
     const json = await res.json() as any;
 
+    // GLM (Z.AI) may return { data: [...] } or { models: [...] }
+    if (account.provider === "glm") {
+      const models = Array.isArray(json.data) ? json.data : Array.isArray(json.models) ? json.models : [];
+      if (models.length === 0) {
+        console.warn(`[model-fetcher] GLM returned no usable model array. Keys: ${Object.keys(json).join(", ")}. Sample: ${JSON.stringify(json).slice(0, 300)}`);
+      }
+      return models
+        .filter((m: any) => {
+          const modelId = m.id || m.model;
+          return modelId && isUsableModel(modelId, account.provider);
+        })
+        .map((m: any) => ({
+          id: m.id || m.model,
+          name: m.display_name || m.name || prettifyModelName(m.id || m.model, account.provider),
+          provider: account.provider,
+        }));
+    }
+
     // Gemini returns { models: [...] } instead of { data: [...] }
     if (account.provider === "gemini" && Array.isArray(json.models)) {
       return json.models

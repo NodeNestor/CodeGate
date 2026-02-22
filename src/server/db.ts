@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
 import { v4 as uuidv4 } from "uuid";
-import { encrypt, decrypt } from "./encryption.js";
+import { encrypt, decrypt, tryDecrypt, decryptWithKey, encryptWithKey } from "./encryption.js";
 
 const DATA_DIR = process.env.DATA_DIR || "./data";
 const DB_PATH = path.join(DATA_DIR, "code-proxy.db");
@@ -65,6 +65,7 @@ export interface AccountDecrypted extends Omit<Account, "api_key_enc" | "refresh
   api_key: string | null;
   refresh_token: string | null;
   external_account_id: string | null;
+  decrypt_error?: boolean;
 }
 
 export type AccountStatus = "unknown" | "active" | "expired" | "error" | "rate_limited";
@@ -300,10 +301,16 @@ export const getDb = getDB;
 
 function decryptAccount(row: Account): AccountDecrypted {
   const { api_key_enc, refresh_token_enc, ...rest } = row;
+  const api_key = api_key_enc ? tryDecrypt(api_key_enc) : null;
+  const refresh_token = refresh_token_enc ? tryDecrypt(refresh_token_enc) : null;
+  const decrypt_error =
+    (api_key_enc !== null && api_key === null) ||
+    (refresh_token_enc !== null && refresh_token === null);
   return {
     ...rest,
-    api_key: api_key_enc ? decrypt(api_key_enc) : null,
-    refresh_token: refresh_token_enc ? decrypt(refresh_token_enc) : null,
+    api_key,
+    refresh_token,
+    ...(decrypt_error ? { decrypt_error: true } : {}),
   };
 }
 
@@ -407,7 +414,11 @@ export function updateAccount(
 }
 
 export function deleteAccount(id: string): boolean {
-  return getDB().prepare("DELETE FROM accounts WHERE id = ?").run(id).changes > 0;
+  const d = getDB();
+  // Clear FK references that lack ON DELETE CASCADE
+  d.prepare("UPDATE usage SET account_id = NULL WHERE account_id = ?").run(id);
+  d.prepare("UPDATE sessions SET account_id = NULL WHERE account_id = ?").run(id);
+  return d.prepare("DELETE FROM accounts WHERE id = ?").run(id).changes > 0;
 }
 
 export function updateAccountTokens(id: string, accessToken: string, refreshToken: string, expiresAt: number, externalAccountId?: string): void {
@@ -444,6 +455,57 @@ export function recordAccountError(id: string, error: string): void {
   getDB().prepare(
     `UPDATE accounts SET last_error = ?, last_error_at = datetime('now'), error_count = error_count + 1, updated_at = datetime('now') WHERE id = ?`
   ).run(error.substring(0, 500), id);
+}
+
+export function getAccountsWithDecryptErrors(): number {
+  const d = getDB();
+  const rows = d.prepare("SELECT api_key_enc, refresh_token_enc FROM accounts").all() as Pick<Account, "api_key_enc" | "refresh_token_enc">[];
+  let count = 0;
+  for (const row of rows) {
+    if (row.api_key_enc && tryDecrypt(row.api_key_enc) === null) count++;
+    else if (row.refresh_token_enc && tryDecrypt(row.refresh_token_enc) === null) count++;
+  }
+  return count;
+}
+
+export function reEncryptAllAccounts(
+  oldKey: Buffer,
+  newKey: Buffer
+): { success: number; failed: number } {
+  const d = getDB();
+  const rows = d.prepare("SELECT id, api_key_enc, refresh_token_enc FROM accounts").all() as Pick<Account, "id" | "api_key_enc" | "refresh_token_enc">[];
+
+  let success = 0;
+  let failed = 0;
+
+  const updateStmt = d.prepare(
+    "UPDATE accounts SET api_key_enc = ?, refresh_token_enc = ?, updated_at = datetime('now') WHERE id = ?"
+  );
+
+  d.transaction(() => {
+    for (const row of rows) {
+      try {
+        let newApiKeyEnc = row.api_key_enc;
+        let newRefreshTokenEnc = row.refresh_token_enc;
+
+        if (row.api_key_enc) {
+          const plaintext = decryptWithKey(row.api_key_enc, oldKey);
+          newApiKeyEnc = encryptWithKey(plaintext, newKey);
+        }
+        if (row.refresh_token_enc) {
+          const plaintext = decryptWithKey(row.refresh_token_enc, oldKey);
+          newRefreshTokenEnc = encryptWithKey(plaintext, newKey);
+        }
+
+        updateStmt.run(newApiKeyEnc, newRefreshTokenEnc, row.id);
+        success++;
+      } catch {
+        failed++;
+      }
+    }
+  })();
+
+  return { success, failed };
 }
 
 export function getOAuthAccounts(): AccountDecrypted[] {
