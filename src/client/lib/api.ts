@@ -437,6 +437,13 @@ export async function deleteOldLogs(
   });
 }
 
+export async function clearAllLogs(): Promise<{ deleted: number }> {
+  return request<{ deleted: number }>("/logs", {
+    method: "DELETE",
+    body: JSON.stringify({ clear_all: true }),
+  });
+}
+
 // ── Model Limits ────────────────────────────────────────────────────────────
 
 export interface ModelLimitsInfo {

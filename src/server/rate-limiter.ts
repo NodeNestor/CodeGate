@@ -8,42 +8,53 @@ interface RateWindow {
 
 const windows = new Map<string, RateWindow>();
 
+const WINDOW_MS = 60_000; // 1-minute sliding window
+
 /**
- * Check if an account is currently rate-limited.
- * Does NOT consume a request slot -- use recordRequest() for that.
+ * Atomically check rate limit AND record the request in one step.
+ * Returns true if the request is rate-limited (rejected), false if allowed.
+ *
+ * This eliminates the TOCTOU race between checking and recording that
+ * existed when isRateLimited() and recordRequest() were separate calls.
  */
-export function isRateLimited(accountId: string, rateLimit: number): boolean {
+export function checkAndRecordRequest(accountId: string, rateLimit: number): boolean {
   if (rateLimit <= 0) return false;
 
   const now = Date.now();
-  const windowMs = 60_000; // 1-minute sliding window
-  const window = windows.get(accountId);
+  const cutoff = now - WINDOW_MS;
 
-  if (!window) return false;
-
-  // Prune old timestamps
-  const cutoff = now - windowMs;
-  const recent = window.timestamps.filter((t) => t > cutoff);
-  window.timestamps = recent;
-
-  return recent.length >= rateLimit;
-}
-
-/**
- * Record a request for rate-limiting purposes.
- */
-export function recordRequest(accountId: string): void {
-  const now = Date.now();
   let window = windows.get(accountId);
   if (!window) {
     window = { timestamps: [] };
     windows.set(accountId, window);
   }
-  window.timestamps.push(now);
 
-  // Prune timestamps older than 1 minute to avoid memory growth
-  const cutoff = now - 60_000;
+  // Prune old timestamps
   window.timestamps = window.timestamps.filter((t) => t > cutoff);
+
+  // Check limit THEN record atomically (no async gap between check and record)
+  if (window.timestamps.length >= rateLimit) {
+    return true; // rate limited, do NOT record
+  }
+
+  window.timestamps.push(now);
+  return false; // allowed
+}
+
+/**
+ * Check if an account is currently rate-limited WITHOUT recording.
+ * Used for pre-filtering candidates in config-manager (read-only check).
+ */
+export function isRateLimited(accountId: string, rateLimit: number): boolean {
+  if (rateLimit <= 0) return false;
+
+  const now = Date.now();
+  const cutoff = now - WINDOW_MS;
+  const window = windows.get(accountId);
+  if (!window) return false;
+
+  const recent = window.timestamps.filter((t) => t > cutoff);
+  return recent.length >= rateLimit;
 }
 
 /**
@@ -51,11 +62,10 @@ export function recordRequest(accountId: string): void {
  */
 export function getRequestCount(accountId: string): number {
   const now = Date.now();
-  const windowMs = 60_000;
+  const cutoff = now - WINDOW_MS;
   const window = windows.get(accountId);
   if (!window) return 0;
 
-  const cutoff = now - windowMs;
   return window.timestamps.filter((t) => t > cutoff).length;
 }
 

@@ -10,6 +10,7 @@ import {
   getRequestLogs,
   getRequestLogDetail,
   deleteOldLogs,
+  clearAllLogs,
   type RequestLog,
 } from "../lib/api";
 
@@ -26,6 +27,8 @@ export default function Logs() {
   const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [retentionDays, setRetentionDays] = useState(30);
+  const [retentionSaving, setRetentionSaving] = useState(false);
   const limit = 50;
 
   useEffect(() => {
@@ -65,6 +68,10 @@ export default function Logs() {
       const s = await getSettings();
       setLoggingEnabled(s.request_logging === "true");
       setDetailedLogging(s.detailed_request_logging === "true");
+      if (s.log_retention_days) {
+        const n = parseInt(s.log_retention_days, 10);
+        if (!isNaN(n) && n > 0) setRetentionDays(n);
+      }
     } catch {
       // ignore
     } finally {
@@ -99,13 +106,37 @@ export default function Logs() {
   }
 
   async function handleClearOldLogs() {
-    if (!confirm("Delete logs older than 7 days?")) return;
+    if (!confirm(`Delete logs older than ${retentionDays} days?`)) return;
     try {
-      const result = await deleteOldLogs(7);
+      const result = await deleteOldLogs(retentionDays);
       alert(`Deleted ${result.deleted} old log entries.`);
       loadLogs();
     } catch (err) {
       console.error("Failed to clear old logs:", err);
+    }
+  }
+
+  async function handleClearAllLogs() {
+    if (!confirm("Delete ALL request logs? This cannot be undone.")) return;
+    try {
+      const result = await clearAllLogs();
+      alert(`Deleted ${result.deleted} log entries.`);
+      setPage(1);
+      loadLogs();
+    } catch (err) {
+      console.error("Failed to clear logs:", err);
+    }
+  }
+
+  async function handleRetentionChange(days: number) {
+    setRetentionDays(days);
+    setRetentionSaving(true);
+    try {
+      await updateSettings({ log_retention_days: String(days) });
+    } catch (err) {
+      console.error("Failed to save retention setting:", err);
+    } finally {
+      setRetentionSaving(false);
     }
   }
 
@@ -166,9 +197,6 @@ export default function Logs() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="secondary" size="sm" onClick={handleClearOldLogs}>
-            Clear Old Logs
-          </Button>
           <Button
             variant="secondary"
             size="sm"
@@ -215,6 +243,50 @@ export default function Logs() {
               onChange={handleToggleDetailed}
               disabled={saving || !loggingEnabled}
             />
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex items-center justify-between py-1">
+            <div>
+              <p className="text-sm font-medium text-gray-200">
+                Auto-Retention Period
+              </p>
+              <p className="text-xs text-gray-500">
+                Logs older than this are automatically deleted every 6 hours
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={retentionDays}
+                onChange={(e) => handleRetentionChange(parseInt(e.target.value, 10))}
+                disabled={retentionSaving}
+                className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
+              >
+                <option value={7}>7 days</option>
+                <option value={14}>14 days</option>
+                <option value={30}>30 days</option>
+                <option value={60}>60 days</option>
+                <option value={90}>90 days</option>
+              </select>
+            </div>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex items-center justify-between py-1">
+            <div>
+              <p className="text-sm font-medium text-gray-200">
+                Clear Logs
+              </p>
+              <p className="text-xs text-gray-500">
+                Manually delete old logs or clear everything
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={handleClearOldLogs}>
+                Clear Old ({retentionDays}d+)
+              </Button>
+              <Button variant="danger" size="sm" onClick={handleClearAllLogs}>
+                Clear All
+              </Button>
+            </div>
           </div>
         </div>
       </Card>

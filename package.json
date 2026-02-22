@@ -8,16 +8,18 @@
     "dev:client": "vite",
     "build": "vite build && tsc -p tsconfig.server.json",
     "start": "node dist/server/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down"
   },
   "dependencies": {
-    "hono": "^4.7.0",
     "@hono/node-server": "^1.13.0",
     "better-sqlite3": "^11.7.0",
-    "uuid": "^11.1.0",
-    "dockerode": "^4.0.4"
+    "dockerode": "^4.0.4",
+    "hono": "^4.7.0",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
@@ -37,6 +39,7 @@
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vitest": "^4.0.18"
   }
 }

@@ -2,10 +2,11 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { bodyLimit } from "hono/body-limit";
 import path from "node:path";
 import fs from "node:fs";
 
-import { initDB, getSetting, setSetting } from "./db.js";
+import { initDB, getSetting, setSetting, startLogRetentionCleanup } from "./db.js";
 import accountsRouter from "./routes/accounts.js";
 import configsRouter from "./routes/configs.js";
 import settingsRouter from "./routes/settings.js";
@@ -73,11 +74,15 @@ ui.use(
 );
 
 // SPA fallback: serve index.html for client-side routing
+// Cache the HTML at startup to avoid blocking fs.readFileSync on every request
+const indexPath = path.resolve("dist/client/index.html");
+const cachedIndexHtml = fs.existsSync(indexPath)
+  ? fs.readFileSync(indexPath, "utf8")
+  : null;
+
 ui.get("*", (c) => {
-  const indexPath = path.resolve("dist/client/index.html");
-  if (fs.existsSync(indexPath)) {
-    const html = fs.readFileSync(indexPath, "utf8");
-    return c.html(html);
+  if (cachedIndexHtml) {
+    return c.html(cachedIndexHtml);
   }
   return c.html(`<!DOCTYPE html>
 <html>
@@ -91,8 +96,11 @@ ui.get("*", (c) => {
 
 // ─── Proxy App (port 9212) ──────────────────────────────────────────────────
 
+const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
+
 const proxy = new Hono();
 proxy.use("/*", cors());
+proxy.use("/*", bodyLimit({ maxSize: MAX_BODY_SIZE }));
 proxy.route("/", proxyRouter);
 
 // ─── Start servers ──────────────────────────────────────────────────────────
@@ -118,5 +126,8 @@ initSessionManager().catch((err) => {
 
 // Start background OAuth token refresh loop (every 15 minutes)
 startTokenRefreshLoop();
+
+// Start automatic log retention cleanup (deletes logs older than 30 days, runs every 6 hours)
+startLogRetentionCleanup();
 
 console.log(`CodeProxy is running.`);
