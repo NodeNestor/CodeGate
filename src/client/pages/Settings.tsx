@@ -1,0 +1,502 @@
+import React, { useEffect, useState } from "react";
+import Card from "../components/ui/Card";
+import Button from "../components/ui/Button";
+import Badge from "../components/ui/Badge";
+import Toggle from "../components/ui/Toggle";
+import {
+  getSettings,
+  updateSettings,
+  getModelLimits,
+  setModelLimit,
+  deleteModelLimit,
+  type ModelLimitsInfo,
+} from "../lib/api";
+
+export default function Settings() {
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
+  const [copiedKey, setCopiedKey] = useState(false);
+
+  // Model limits
+  const [modelLimits, setModelLimits] = useState<
+    Record<string, ModelLimitsInfo>
+  >({});
+  const [newModelId, setNewModelId] = useState("");
+  const [newMaxTokens, setNewMaxTokens] = useState("");
+  const [newToolCalling, setNewToolCalling] = useState<string>("unset");
+  const [newReasoning, setNewReasoning] = useState<string>("unset");
+
+  useEffect(() => {
+    loadSettings();
+    loadModelLimits();
+  }, []);
+
+  async function loadSettings() {
+    setLoading(true);
+    try {
+      setSettings(await getSettings());
+    } catch (err) {
+      console.error("Failed to load settings:", err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadModelLimits() {
+    try {
+      setModelLimits(await getModelLimits());
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleSave(updates: Record<string, string>) {
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      await updateSettings(updates);
+      setSettings((prev) => ({ ...prev, ...updates }));
+      setSaveMsg({ ok: true, text: "Settings saved." });
+      setTimeout(() => setSaveMsg(null), 3000);
+    } catch (err: any) {
+      setSaveMsg({
+        ok: false,
+        text: err.message || "Failed to save settings.",
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleToggle(key: string, value: boolean) {
+    await handleSave({ [key]: value ? "true" : "false" });
+  }
+
+  async function handleAddModelLimit() {
+    if (!newModelId.trim()) return;
+    try {
+      const limits: Partial<ModelLimitsInfo> = {};
+      if (newMaxTokens) limits.maxOutputTokens = parseInt(newMaxTokens, 10);
+      if (newToolCalling !== "unset")
+        limits.supportsToolCalling = newToolCalling === "true";
+      if (newReasoning !== "unset")
+        limits.supportsReasoning = newReasoning === "true";
+      const updated = await setModelLimit(newModelId.trim(), limits);
+      setModelLimits(updated);
+      setNewModelId("");
+      setNewMaxTokens("");
+      setNewToolCalling("unset");
+      setNewReasoning("unset");
+    } catch (err: any) {
+      setSaveMsg({ ok: false, text: err.message || "Failed to add limit" });
+    }
+  }
+
+  async function handleDeleteModelLimit(modelId: string) {
+    try {
+      const updated = await deleteModelLimit(modelId);
+      setModelLimits(updated);
+    } catch (err: any) {
+      setSaveMsg({ ok: false, text: err.message || "Failed to delete limit" });
+    }
+  }
+
+  function maskApiKey(key: string): string {
+    if (!key || key.length < 8) return key || "Not set";
+    return key.slice(0, 4) + "****" + key.slice(-4);
+  }
+
+  function handleCopyApiKey() {
+    const key = settings.proxy_api_key || settings.api_key || "";
+    if (!key) return;
+    navigator.clipboard.writeText(key).then(() => {
+      setCopiedKey(true);
+      setTimeout(() => setCopiedKey(false), 2000);
+    });
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <svg
+          className="h-8 w-8 animate-spin text-brand-500"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <circle
+            className="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            strokeWidth="4"
+          />
+          <path
+            className="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+          />
+        </svg>
+      </div>
+    );
+  }
+
+  const proxyPort = settings.proxy_port || "9112";
+  const uiPort = settings.ui_port || "9111";
+  const apiKey = settings.proxy_api_key || settings.api_key || "";
+  const autoSwitchOnError =
+    (settings.auto_switch_on_error || "true") === "true";
+  const autoSwitchOnRateLimit =
+    (settings.auto_switch_on_rate_limit || "true") === "true";
+  const requestLogging = settings.request_logging === "true";
+  const detailedLogging = settings.detailed_request_logging === "true";
+
+  const modelLimitEntries = Object.entries(modelLimits);
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold text-gray-100">Settings</h1>
+        <p className="text-sm text-gray-400 mt-1">
+          Manage proxy configuration and routing behavior
+        </p>
+      </div>
+
+      {/* Save feedback */}
+      {saveMsg && (
+        <div
+          className={`text-sm px-4 py-2 rounded-lg ${
+            saveMsg.ok
+              ? "text-green-400 bg-green-500/10 border border-green-500/20"
+              : "text-red-400 bg-red-500/10 border border-red-500/20"
+          }`}
+        >
+          {saveMsg.text}
+        </div>
+      )}
+
+      {/* Proxy Configuration */}
+      <Card title="Proxy Configuration" subtitle="Network ports and endpoints">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">Proxy Port</p>
+              <p className="text-xs text-gray-500">
+                The port the proxy server listens on for API requests
+              </p>
+            </div>
+            <code className="text-sm font-mono text-gray-300 bg-gray-800 px-3 py-1.5 rounded-lg">
+              {proxyPort}
+            </code>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">UI Port</p>
+              <p className="text-xs text-gray-500">
+                The port the web dashboard is served on
+              </p>
+            </div>
+            <code className="text-sm font-mono text-gray-300 bg-gray-800 px-3 py-1.5 rounded-lg">
+              {uiPort}
+            </code>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">Proxy URL</p>
+              <p className="text-xs text-gray-500">
+                Use this URL in your AI tools
+              </p>
+            </div>
+            <code className="text-sm font-mono text-brand-400 bg-gray-800 px-3 py-1.5 rounded-lg">
+              http://localhost:{proxyPort}
+            </code>
+          </div>
+        </div>
+      </Card>
+
+      {/* API Key */}
+      <Card title="API Key" subtitle="Authentication key for proxy access">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <code className="text-sm font-mono text-gray-300 bg-gray-800 px-3 py-1.5 rounded-lg">
+              {apiKey ? maskApiKey(apiKey) : "Not configured"}
+            </code>
+            {apiKey && (
+              <Button size="sm" variant="ghost" onClick={handleCopyApiKey}>
+                {copiedKey ? (
+                  <>
+                    <svg
+                      className="h-4 w-4 text-green-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M4.5 12.75l6 6 9-13.5"
+                      />
+                    </svg>
+                    <span className="text-xs text-green-400">Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      className="h-4 w-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
+                      />
+                    </svg>
+                    <span className="text-xs">Copy</span>
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      {/* Model Limits */}
+      <Card
+        title="Model Limits"
+        subtitle="Set max output tokens and capability flags per model. The proxy will clamp max_tokens before forwarding."
+      >
+        <div className="space-y-4">
+          {/* Existing limits */}
+          {modelLimitEntries.length > 0 && (
+            <div className="rounded-lg border border-gray-800 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-800/50 text-gray-400 text-xs uppercase tracking-wider">
+                    <th className="px-3 py-2 text-left font-medium">
+                      Model ID
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium">
+                      Max Output
+                    </th>
+                    <th className="px-3 py-2 text-center font-medium">
+                      Capabilities
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800/50">
+                  {modelLimitEntries.map(([modelId, lim]) => (
+                    <tr key={modelId}>
+                      <td className="px-3 py-2 font-mono text-xs text-gray-200">
+                        {modelId}
+                      </td>
+                      <td className="px-3 py-2 text-right text-xs text-gray-300">
+                        {lim.maxOutputTokens != null
+                          ? lim.maxOutputTokens.toLocaleString()
+                          : "-"}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          {lim.supportsToolCalling === true && (
+                            <Badge variant="success">Tools</Badge>
+                          )}
+                          {lim.supportsToolCalling === false && (
+                            <Badge variant="warning">No Tools</Badge>
+                          )}
+                          {lim.supportsReasoning === true && (
+                            <Badge variant="purple">Reasoning</Badge>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          onClick={() => handleDeleteModelLimit(modelId)}
+                          className="text-gray-500 hover:text-red-400 text-xs"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {modelLimitEntries.length === 0 && (
+            <p className="text-sm text-gray-500 italic">
+              No model limits configured. Add one below to cap max_tokens for a
+              specific model.
+            </p>
+          )}
+
+          {/* Add new limit */}
+          <div className="bg-gray-800/30 rounded-lg p-3 space-y-3">
+            <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">
+              Add Model Limit
+            </p>
+            <div className="flex items-end gap-3 flex-wrap">
+              <div className="flex-1 min-w-[200px]">
+                <label className="block text-xs text-gray-400 mb-1">
+                  Model ID (prefix match)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. deepseek-chat"
+                  value={newModelId}
+                  onChange={(e) => setNewModelId(e.target.value)}
+                  className="block w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                />
+              </div>
+              <div className="w-32">
+                <label className="block text-xs text-gray-400 mb-1">
+                  Max Output Tokens
+                </label>
+                <input
+                  type="number"
+                  placeholder="e.g. 8192"
+                  value={newMaxTokens}
+                  onChange={(e) => setNewMaxTokens(e.target.value)}
+                  className="block w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                />
+              </div>
+              <div className="w-28">
+                <label className="block text-xs text-gray-400 mb-1">
+                  Tools
+                </label>
+                <select
+                  value={newToolCalling}
+                  onChange={(e) => setNewToolCalling(e.target.value)}
+                  className="block w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                >
+                  <option value="unset">-</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+              <div className="w-28">
+                <label className="block text-xs text-gray-400 mb-1">
+                  Reasoning
+                </label>
+                <select
+                  value={newReasoning}
+                  onChange={(e) => setNewReasoning(e.target.value)}
+                  className="block w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                >
+                  <option value="unset">-</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+              <Button
+                size="sm"
+                onClick={handleAddModelLimit}
+                disabled={!newModelId.trim()}
+              >
+                Add
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* Request Logging */}
+      <Card
+        title="Request Logging"
+        subtitle="Log proxy requests for debugging and monitoring"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">
+                Enable Request Logging
+              </p>
+              <p className="text-xs text-gray-500">
+                Log all proxy requests with metadata (model, status, tokens,
+                latency)
+              </p>
+            </div>
+            <Toggle
+              checked={requestLogging}
+              onChange={(val) => handleToggle("request_logging", val)}
+              disabled={saving}
+            />
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">
+                Detailed Request Logging
+              </p>
+              <p className="text-xs text-gray-500">
+                Also capture full request and response bodies (increases storage)
+              </p>
+            </div>
+            <Toggle
+              checked={detailedLogging}
+              onChange={(val) =>
+                handleToggle("detailed_request_logging", val)
+              }
+              disabled={saving || !requestLogging}
+            />
+          </div>
+        </div>
+      </Card>
+
+      {/* Routing */}
+      <Card
+        title="Routing"
+        subtitle="Control how requests are routed across accounts"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">
+                Auto-switch on Error
+              </p>
+              <p className="text-xs text-gray-500">
+                Automatically try the next account when an API error occurs
+              </p>
+            </div>
+            <Toggle
+              checked={autoSwitchOnError}
+              onChange={(val) => handleToggle("auto_switch_on_error", val)}
+              disabled={saving}
+            />
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">
+                Auto-switch on Rate Limit
+              </p>
+              <p className="text-xs text-gray-500">
+                Automatically try the next account when rate-limited (429
+                response)
+              </p>
+            </div>
+            <Toggle
+              checked={autoSwitchOnRateLimit}
+              onChange={(val) =>
+                handleToggle("auto_switch_on_rate_limit", val)
+              }
+              disabled={saving}
+            />
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
