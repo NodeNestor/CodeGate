@@ -176,9 +176,9 @@ export function deanonymize(text: string): string {
   );
 
   for (const [replacement, original] of sortedReplacements) {
-    while (result.includes(replacement)) {
-      result = result.replace(replacement, original);
-    }
+    if (!result.includes(replacement)) continue;
+    // replaceAll handles all occurrences in one pass
+    result = result.replaceAll(replacement, original);
   }
 
   return result;
