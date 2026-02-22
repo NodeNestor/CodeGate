@@ -297,8 +297,14 @@ async function readContainerFile(container: Docker.Container, filePath: string):
     const chunks: Buffer[] = [];
 
     return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        stream.destroy?.();
+        resolve(null);
+      }, 5000);
+
       stream.on("data", (chunk: Buffer) => chunks.push(chunk));
       stream.on("end", () => {
+        clearTimeout(timeout);
         const raw = Buffer.concat(chunks);
         const text = raw.toString("utf-8");
         const jsonStart = text.indexOf("{");
@@ -308,7 +314,10 @@ async function readContainerFile(container: Docker.Container, filePath: string):
         }
         resolve(text.slice(jsonStart));
       });
-      stream.on("error", () => resolve(null));
+      stream.on("error", () => {
+        clearTimeout(timeout);
+        resolve(null);
+      });
     });
   } catch {
     return null;

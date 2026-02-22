@@ -1,12 +1,24 @@
 /**
  * All regex patterns for simple pattern-based guardrails.
  *
- * LiteLLM-style patterns definition: each pattern includes the regex,
- * replacement generator, optional validator, and metadata.
+ * Stateless deterministic encryption - replacements embed encrypted tokens
+ * in a consistent format: [<CATEGORY>-<encrypted-token>]
+ *
+ * Deanonymization extracts the token and decrypts it - no DB lookups needed.
  */
 
 import type { PatternDef } from "./types.js";
-import { shortHash, hmac } from "./shared.js";
+import { shortHash, hmac, encryptForToken } from "./shared.js";
+
+// Short fake-name pools for realistic email local parts
+const EMAIL_FIRST = [
+  "alex", "jordan", "casey", "taylor", "morgan", "riley", "quinn", "avery",
+  "dakota", "skyler", "jamie", "parker", "rowan", "finley", "sage", "emery",
+];
+const EMAIL_LAST = [
+  "morgan", "lee", "rivera", "chen", "bailey", "brooks", "foster", "hayes",
+  "kim", "patel", "cruz", "diaz", "ellis", "grant", "harper", "huang",
+];
 
 // ─── PII Patterns ────────────────────────────────────────────────────────────
 
@@ -19,13 +31,19 @@ const emailPattern: PatternDef = {
   color: "text-blue-400 bg-blue-600/10",
   priority: 10,
   patterns: [/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g],
+  validator: (match: string) => {
+    // Skip already-anonymized emails
+    if (/@anon\.com$/i.test(match)) return false;
+    if (/\[email-/i.test(match)) return false;
+    return true;
+  },
   replacementGenerator: (original: string) => {
-    const h = shortHash(original);
-    const atIdx = original.indexOf("@");
-    const domain = atIdx >= 0 ? original.slice(atIdx + 1) : "example.com";
-    const domainParts = domain.split(".");
-    const tld = domainParts.length > 1 ? domainParts[domainParts.length - 1] : "com";
-    return `user_${h}@anon.${tld}`;
+    // Generate a realistic-looking fake email (reverse-map handles deanonymization)
+    const h = hmac(original);
+    const first = EMAIL_FIRST[parseInt(h.slice(0, 4), 16) % EMAIL_FIRST.length];
+    const last = EMAIL_LAST[parseInt(h.slice(4, 8), 16) % EMAIL_LAST.length];
+    const num = parseInt(h.slice(8, 10), 16) % 100;
+    return `${first}.${last}${num}@anon.com`;
   },
 };
 
@@ -42,13 +60,13 @@ const phonePattern: PatternDef = {
     /\+\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}/g,
   ],
   replacementGenerator: (original: string) => {
+    const token = encryptForToken(original, "phone");
+    // Generate a fake phone number format with token
     const h = hmac(original);
-    let hIdx = 0;
-    return original.replace(/\d/g, () => {
-      const digit = parseInt(h[hIdx % h.length], 16) % 10;
-      hIdx++;
-      return String(digit);
-    });
+    const area = (parseInt(h.slice(0, 2), 16) % 800) + 200;
+    const exchange = (parseInt(h.slice(2, 4), 16) % 800) + 100;
+    const line = (parseInt(h.slice(4, 8), 16) % 9000) + 1000;
+    return `${area}-${exchange}-${line}-${token.slice(0, 8)}`;
   },
 };
 
@@ -65,11 +83,10 @@ const ssnPattern: PatternDef = {
     /\b(?!000|666|9\d{2})\d{3}(?!00)\d{2}(?!0000)\d{4}\b/g,
   ],
   replacementGenerator: (original: string) => {
-    const h = shortHash(original, 6);
-    return `[SSN-REDACTED-${h}]`;
+    const token = encryptForToken(original, "ssn");
+    return `[SSN-${token.slice(0, 12)}]`;
   },
   validator: (match: string) => {
-    // Basic SSN validation: not all zeros in any group
     const digits = match.replace(/-/g, "");
     if (digits.length !== 9) return false;
     const area = digits.slice(0, 3);
@@ -89,24 +106,20 @@ const creditCardPattern: PatternDef = {
   color: "text-amber-400 bg-amber-600/10",
   priority: 5,
   patterns: [
-    // Visa
     /\b4\d{3}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
-    // Mastercard
     /\b5[1-5]\d{2}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
-    // Amex
     /\b3[47]\d{2}[\s-]?\d{6}[\s-]?\d{5}\b/g,
-    // Discover
     /\b6(?:011|5\d{2})[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
   ],
   replacementGenerator: (original: string) => {
-    const h = shortHash(original, 6);
+    const token = encryptForToken(original, "card");
     const digits = original.replace(/[\s-]/g, "");
     let type = "CARD";
     if (digits.startsWith("4")) type = "VISA";
     else if (/^5[1-5]/.test(digits)) type = "MC";
     else if (/^3[47]/.test(digits)) type = "AMEX";
     else if (digits.startsWith("6")) type = "DISC";
-    return `[CARD-${type}-${h}]`;
+    return `[${type}-${token.slice(0, 12)}]`;
   },
 };
 
@@ -120,8 +133,8 @@ const ibanPattern: PatternDef = {
   priority: 15,
   patterns: [/\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/g],
   replacementGenerator: (original: string) => {
-    const h = shortHash(original, 6);
-    return `[IBAN-REDACTED-${h}]`;
+    const token = encryptForToken(original, "iban");
+    return `[IBAN-${token.slice(0, 12)}]`;
   },
 };
 
@@ -134,22 +147,16 @@ const passportPattern: PatternDef = {
   color: "text-indigo-400 bg-indigo-600/10",
   priority: 25,
   patterns: [
-    // US: 9 digits
     /\b[0-9]{9}\b/g,
-    // UK: 9 digits (same format, context needed)
-    // DE: C followed by 8 alphanumeric
     /\bC[A-Z0-9]{8}\b/g,
-    // FR: 2 digits + 2 letters + 5 digits
     /\b\d{2}[A-Z]{2}\d{5}\b/g,
-    // NL: 2 letters + 6 digits + 1 letter
     /\b[A-Z]{2}\d{6}[A-Z]\b/g,
-    // CA: 2 letters + 6 digits
     /\b[A-Z]{2}\d{6}\b/g,
   ],
   contextPattern: /(?:passport|travel\s+document|document\s+number|passport\s+no)/gi,
   replacementGenerator: (original: string) => {
-    const h = shortHash(original, 6);
-    return `[PASSPORT-REDACTED-${h}]`;
+    const token = encryptForToken(original, "passport");
+    return `[PASSPORT-${token.slice(0, 12)}]`;
   },
 };
 
@@ -162,26 +169,23 @@ const ipAddressPattern: PatternDef = {
   color: "text-purple-400 bg-purple-600/10",
   priority: 30,
   patterns: [
-    // IPv4
     /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g,
-    // IPv6 (simplified - common formats)
     /\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b/g,
     /\b(?:[0-9a-fA-F]{1,4}:){1,7}:\b/g,
     /\b::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}\b/g,
   ],
   replacementGenerator: (original: string) => {
-    // Check if IPv6
+    const token = encryptForToken(original, "ip");
     if (original.includes(":")) {
-      const h = hmac(original);
-      return `fd00::${h.slice(0, 4)}:${h.slice(4, 8)}`;
+      return `[IPv6-${token.slice(0, 12)}]`;
     }
-    // IPv4
+    // Generate a fake IP for display
     const h = hmac(original);
     const o1 = (parseInt(h.slice(0, 2), 16) % 223) + 1;
     const o2 = parseInt(h.slice(2, 4), 16) % 256;
     const o3 = parseInt(h.slice(4, 6), 16) % 256;
     const o4 = (parseInt(h.slice(6, 8), 16) % 254) + 1;
-    return `${o1}.${o2}.${o3}.${o4}`;
+    return `[IP-${o1}.${o2}.${o3}.${o4}-${token.slice(0, 6)}]`;
   },
 };
 
@@ -197,8 +201,8 @@ const streetAddressPattern: PatternDef = {
     /\b\d{1,6}\s+[A-Za-z0-9][\w\s.'-]*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Way|Place|Pl|Circle|Cir|Terrace|Ter|Highway|Hwy|Parkway|Pkwy|Trail|Trl)\b\.?/gi,
   ],
   replacementGenerator: (original: string) => {
-    const h = shortHash(original, 6);
-    return `[ADDRESS-REDACTED-${h}]`;
+    const token = encryptForToken(original, "address");
+    return `[ADDR-${token}]`;
   },
 };
 
@@ -213,17 +217,15 @@ const awsKeysPattern: PatternDef = {
   color: "text-orange-400 bg-orange-600/10",
   priority: 3,
   patterns: [
-    // AWS access key ID
     /\b(AKIA[0-9A-Z]{16})\b/g,
-    // AWS secret key (40-char base64-ish near "aws" or "secret" context)
     /(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY|secret_?key)\s*[:=]\s*["']?([A-Za-z0-9/+=]{40})["']?/g,
   ],
   replacementGenerator: (original: string) => {
-    const h = shortHash(original, 8);
+    const token = encryptForToken(original, "aws");
     if (original.startsWith("AKIA")) {
-      return `AKIA-REDACTED-${h}`;
+      return `[AKIA-${token.slice(0, 12)}]`;
     }
-    return `[AWS-SECRET-${h}]`;
+    return `[AWS-SECRET-${token.slice(0, 12)}]`;
   },
 };
 
@@ -239,8 +241,8 @@ const jwtPattern: PatternDef = {
     /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
   ],
   replacementGenerator: (original: string) => {
-    const h = shortHash(original, 8);
-    return `[JWT-REDACTED-${h}]`;
+    const token = encryptForToken(original, "jwt");
+    return `[JWT-${token.slice(0, 12)}]`;
   },
 };
 
@@ -255,8 +257,9 @@ const privateKeyPattern: PatternDef = {
   patterns: [
     /-----BEGIN\s+(?:RSA\s+|DSA\s+|EC\s+|OPENSSH\s+|PGP\s+)?PRIVATE KEY-----[\s\S]*?-----END\s+(?:RSA\s+|DSA\s+|EC\s+|OPENSSH\s+|PGP\s+)?PRIVATE KEY-----/g,
   ],
-  replacementGenerator: (_original: string) => {
-    return `[PRIVATE-KEY-REDACTED]`;
+  replacementGenerator: (original: string) => {
+    const token = encryptForToken(original, "key");
+    return `[PRIVATE-KEY-${token.slice(0, 12)}]`;
   },
 };
 
@@ -270,9 +273,10 @@ const urlAuthPattern: PatternDef = {
   priority: 12,
   patterns: [/https?:\/\/[^:\s]+:[^@\s]+@[^\s]+/g],
   replacementGenerator: (original: string) => {
+    const token = encryptForToken(original, "url");
     return original.replace(
       /\/\/([^:]+):([^@]+)@/,
-      `//[redacted-${shortHash(original)}]@`
+      `//[redacted-${token.slice(0, 8)}]@`
     );
   },
 };

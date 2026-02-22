@@ -142,20 +142,26 @@ export function runGuardrailsOnRequestBody(body: any, opts?: { requestedGuardrai
   }
 
   // Anonymize messages
+  // For assistant messages: anonymize text blocks but NEVER touch thinking blocks
+  // (thinking blocks have cryptographic signatures that must stay intact)
   if (Array.isArray(clone.messages)) {
     for (const msg of clone.messages) {
       if (typeof msg.content === "string") {
-        msg.content = anonymize(msg.content);
+        msg.content = anonymize(msg.content) || msg.content;
       } else if (Array.isArray(msg.content)) {
         for (const block of msg.content) {
+          // Skip thinking blocks — they have signatures that must not be modified
+          if (block.type === "thinking") continue;
+
           if (block.type === "text" && typeof block.text === "string") {
-            block.text = anonymize(block.text);
+            const result = anonymize(block.text);
+            if (result) block.text = result;
           }
           if (
             block.type === "tool_result" &&
             typeof block.content === "string"
           ) {
-            block.content = anonymize(block.content);
+            block.content = anonymize(block.content) || block.content;
           }
           if (
             block.type === "tool_result" &&
@@ -163,19 +169,8 @@ export function runGuardrailsOnRequestBody(body: any, opts?: { requestedGuardrai
           ) {
             for (const inner of block.content) {
               if (inner.type === "text" && typeof inner.text === "string") {
-                inner.text = anonymize(inner.text);
-              }
-            }
-          }
-          // tool_use input might contain PII
-          if (block.type === "tool_use" && block.input) {
-            const inputStr = JSON.stringify(block.input);
-            const anonymized = anonymize(inputStr);
-            if (anonymized !== inputStr) {
-              try {
-                block.input = JSON.parse(anonymized);
-              } catch {
-                // If JSON parse fails, keep original
+                const result = anonymize(inner.text);
+                if (result) inner.text = result;
               }
             }
           }

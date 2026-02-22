@@ -1,7 +1,16 @@
 import { Hono } from "hono";
-import { getAllSettings, setSetting } from "../db.js";
+import { getAllSettings, setSetting, getAccountsWithDecryptErrors, reEncryptAllAccounts } from "../db.js";
 import { getAllModels, getModelsForProvider, invalidateModelCache } from "../model-fetcher.js";
 import { getAllModelLimits, setModelLimit, deleteModelLimit } from "../model-limits.js";
+import {
+  getAccountKey,
+  getGuardrailKey,
+  getKeyFingerprint,
+  getAccountKeySource,
+  getGuardrailKeySource,
+  rotateAccountKey as rotateAccountKeyFn,
+  rotateGuardrailKey as rotateGuardrailKeyFn,
+} from "../encryption.js";
 
 const settings = new Hono();
 
@@ -108,6 +117,55 @@ settings.delete("/model-limits/:modelId", (c) => {
     const modelId = decodeURIComponent(c.req.param("modelId"));
     deleteModelLimit(modelId);
     return c.json(getAllModelLimits());
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// ─── Encryption key management ───────────────────────────────────────────────
+
+// GET /api/settings/encryption — key fingerprints, sources, error count
+settings.get("/encryption", (c) => {
+  try {
+    return c.json({
+      account_key: {
+        fingerprint: getKeyFingerprint(getAccountKey()),
+        source: getAccountKeySource(),
+      },
+      guardrail_key: {
+        fingerprint: getKeyFingerprint(getGuardrailKey()),
+        source: getGuardrailKeySource(),
+      },
+      decrypt_errors: getAccountsWithDecryptErrors(),
+    });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// POST /api/settings/encryption/rotate-account-key — rotate + re-encrypt
+settings.post("/encryption/rotate-account-key", (c) => {
+  try {
+    const oldKey = getAccountKey();
+    const newKey = rotateAccountKeyFn();
+    const result = reEncryptAllAccounts(oldKey, newKey);
+    return c.json({
+      fingerprint: getKeyFingerprint(newKey),
+      re_encrypted: result.success,
+      failed: result.failed,
+    });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// POST /api/settings/encryption/rotate-guardrail-key — just rotate
+settings.post("/encryption/rotate-guardrail-key", (c) => {
+  try {
+    const newKey = rotateGuardrailKeyFn();
+    return c.json({
+      fingerprint: getKeyFingerprint(newKey),
+    });
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
   }

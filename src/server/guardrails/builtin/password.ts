@@ -11,20 +11,20 @@ import type { Guardrail, GuardrailConfig, GuardrailContext, GuardrailResult } fr
 import {
   defaultShouldRun,
   getOrCreateMapping,
-  shortHash,
+  encryptForToken,
   looksLikeSecret,
 } from "../shared.js";
 
 function generatePasswordReplacement(original: string): string {
-  const h = shortHash(original, 8);
-  return `[REDACTED-${h}]`;
+  const token = encryptForToken(original, "password");
+  return `[REDACTED-${token.slice(0, 12)}]`;
 }
 
 function generateSecretReplacement(original: string): string {
-  const h = shortHash(original, 8);
+  const token = encryptForToken(original, "secret");
   const lenBucket =
     original.length < 16 ? "short" : original.length < 64 ? "med" : "long";
-  return `[SECRET-${lenBucket}-${h}]`;
+  return `[SECRET-${lenBucket}-${token.slice(0, 12)}]`;
 }
 
 // Keyword context pattern (29+ keywords)
@@ -89,6 +89,8 @@ export function createPasswordGuardrail(): Guardrail {
       STANDALONE_ENTROPY_RE.lastIndex = 0;
       text = text.replace(STANDALONE_ENTROPY_RE, (fullMatch, token) => {
         if (token.startsWith("[REDACTED") || token.startsWith("[SECRET")) return fullMatch;
+        // Skip content inside bracket tokens (regex captures without brackets)
+        if (token.startsWith("SECRET-") || token.startsWith("REDACTED-")) return fullMatch;
         if (token.startsWith("redacted-")) return fullMatch;
         if (token.includes("-redacted-")) return fullMatch;
 
