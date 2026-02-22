@@ -6,6 +6,9 @@
  * 2. Context keywords (name:, author:, by:, etc.)
  * 3. Greeting/sign-off patterns (Hello John,)
  * 4. Standalone known first names
+ *
+ * Path-safe: names inside file paths (C:\Users\name\, /home/name/) are
+ * never anonymized, since replacing them breaks tool calls and system commands.
  */
 
 import type { Guardrail, GuardrailConfig, GuardrailContext, GuardrailResult } from "../types.js";
@@ -28,6 +31,20 @@ function generateNameReplacement(original: string): string {
     return `${FAKE_FIRST_NAMES[firstIdx]} ${FAKE_LAST_NAMES[lastIdx]}`;
   }
   return FAKE_FIRST_NAMES[firstIdx];
+}
+
+/**
+ * Check if a match position sits inside a file-path context.
+ * Catches Windows paths (C:\Users\name\) and Unix paths (/home/name/).
+ */
+function isInPathContext(text: string, start: number, end: number): boolean {
+  // Preceded by path separator → inside a path
+  if (start > 0 && (text[start - 1] === "/" || text[start - 1] === "\\")) return true;
+  // Followed by path separator → inside a path
+  if (end < text.length && (text[end] === "/" || text[end] === "\\")) return true;
+  // Preceded by escaped backslash in JSON (\\) → path in JSON string
+  if (start >= 2 && text[start - 1] === "\\" && text[start - 2] === "\\") return true;
+  return false;
 }
 
 export function createNameGuardrail(): Guardrail {
@@ -82,6 +99,12 @@ export function createNameGuardrail(): Guardrail {
           continue;
         }
 
+        // Skip names inside file paths
+        if (isInPathContext(result, pairMatch.index, pairMatch.index + fullMatch.length)) {
+          pairRe.lastIndex = pairMatch.index + first.length;
+          continue;
+        }
+
         nameMatches.push({
           start: pairMatch.index,
           end: pairMatch.index + fullMatch.length,
@@ -132,8 +155,10 @@ export function createNameGuardrail(): Guardrail {
       );
 
       // Strategy 4: Standalone known first names
+      // Uses negative lookbehind/lookahead for path separators to avoid
+      // breaking file paths like C:\Users\ludde\ or /home/ludde/
       result = result.replace(
-        /\b([a-zA-ZÀ-ÿ]{2,16})\b/g,
+        /(?<![/\\])\b([a-zA-ZÀ-ÿ]{2,16})\b(?![/\\])/g,
         (fullMatch, word) => {
           const lower = word.toLowerCase();
           if (!COMMON_FIRST_NAMES.has(lower)) return fullMatch;
