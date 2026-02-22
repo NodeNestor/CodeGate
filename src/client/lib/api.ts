@@ -29,6 +29,7 @@ export interface Account {
   last_error_at?: string | null;
   error_count?: number;
   status?: string; // unknown | active | expired | error | rate_limited
+  decrypt_error?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -249,6 +250,41 @@ export async function updateSettings(
   return request<void>("/settings", {
     method: "PUT",
     body: JSON.stringify(settings),
+  });
+}
+
+// ── Encryption ──────────────────────────────────────────────────────────────
+
+export interface EncryptionKeyInfo {
+  fingerprint: string;
+  source: "env" | "file" | "generated";
+}
+
+export interface EncryptionInfo {
+  account_key: EncryptionKeyInfo;
+  guardrail_key: EncryptionKeyInfo;
+  decrypt_errors: number;
+}
+
+export async function getEncryptionInfo(): Promise<EncryptionInfo> {
+  return request<EncryptionInfo>("/settings/encryption");
+}
+
+export async function rotateAccountKey(): Promise<{
+  fingerprint: string;
+  re_encrypted: number;
+  failed: number;
+}> {
+  return request("/settings/encryption/rotate-account-key", {
+    method: "POST",
+  });
+}
+
+export async function rotateGuardrailKey(): Promise<{
+  fingerprint: string;
+}> {
+  return request("/settings/encryption/rotate-guardrail-key", {
+    method: "POST",
   });
 }
 

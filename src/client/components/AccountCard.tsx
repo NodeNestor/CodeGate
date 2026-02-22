@@ -1,5 +1,5 @@
 import React from "react";
-import { Pencil, Trash2, Mail, Clock, AlertTriangle } from "lucide-react";
+import { Pencil, Trash2, Mail, Clock, AlertTriangle, ShieldAlert } from "lucide-react";
 import Badge, {
   getProviderVariant,
   getProviderLabel,
@@ -84,6 +84,16 @@ export default function AccountCard({
           </button>
         </div>
       </div>
+
+      {/* Decrypt error warning */}
+      {account.decrypt_error && (
+        <div className="flex items-center gap-2 mb-3 px-2.5 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20">
+          <ShieldAlert className="h-3.5 w-3.5 text-red-400 shrink-0" />
+          <span className="text-xs text-red-400">
+            Decryption failed — re-enter API key to fix
+          </span>
+        </div>
+      )}
 
       {/* Info rows - grows to fill space */}
       <div className="space-y-2 text-sm flex-1">

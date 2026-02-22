@@ -9,7 +9,11 @@ import {
   getModelLimits,
   setModelLimit,
   deleteModelLimit,
+  getEncryptionInfo,
+  rotateAccountKey,
+  rotateGuardrailKey,
   type ModelLimitsInfo,
+  type EncryptionInfo,
 } from "../lib/api";
 
 export default function Settings() {
@@ -31,9 +35,16 @@ export default function Settings() {
   const [newToolCalling, setNewToolCalling] = useState<string>("unset");
   const [newReasoning, setNewReasoning] = useState<string>("unset");
 
+  // Encryption keys
+  const [encryptionInfo, setEncryptionInfo] = useState<EncryptionInfo | null>(null);
+  const [rotatingAccount, setRotatingAccount] = useState(false);
+  const [rotatingGuardrail, setRotatingGuardrail] = useState(false);
+  const [rotateMsg, setRotateMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
   useEffect(() => {
     loadSettings();
     loadModelLimits();
+    loadEncryptionInfo();
   }, []);
 
   async function loadSettings() {
@@ -52,6 +63,49 @@ export default function Settings() {
       setModelLimits(await getModelLimits());
     } catch {
       // ignore
+    }
+  }
+
+  async function loadEncryptionInfo() {
+    try {
+      setEncryptionInfo(await getEncryptionInfo());
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleRotateAccountKey() {
+    if (!confirm("Rotate account encryption key? All accounts will be re-encrypted with the new key.")) return;
+    setRotatingAccount(true);
+    setRotateMsg(null);
+    try {
+      const result = await rotateAccountKey();
+      setRotateMsg({
+        ok: true,
+        text: `Account key rotated. ${result.re_encrypted} account(s) re-encrypted${result.failed ? `, ${result.failed} failed` : ""}.`,
+      });
+      await loadEncryptionInfo();
+    } catch (err: any) {
+      setRotateMsg({ ok: false, text: err.message || "Rotation failed" });
+    } finally {
+      setRotatingAccount(false);
+      setTimeout(() => setRotateMsg(null), 5000);
+    }
+  }
+
+  async function handleRotateGuardrailKey() {
+    if (!confirm("Reroll guardrail seed? This only affects new anonymizations — existing tokens will no longer decrypt.")) return;
+    setRotatingGuardrail(true);
+    setRotateMsg(null);
+    try {
+      const result = await rotateGuardrailKey();
+      setRotateMsg({ ok: true, text: `Guardrail seed rerolled. New fingerprint: ${result.fingerprint}` });
+      await loadEncryptionInfo();
+    } catch (err: any) {
+      setRotateMsg({ ok: false, text: err.message || "Reroll failed" });
+    } finally {
+      setRotatingGuardrail(false);
+      setTimeout(() => setRotateMsg(null), 5000);
     }
   }
 
@@ -271,6 +325,87 @@ export default function Settings() {
           </div>
         </div>
       </Card>
+
+      {/* Encryption Keys */}
+      {encryptionInfo && (
+        <Card title="Encryption Keys" subtitle="Manage encryption keys for account data and guardrail anonymization">
+          <div className="space-y-4">
+            {/* Decrypt error banner */}
+            {encryptionInfo.decrypt_errors > 0 && (
+              <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-400">
+                {encryptionInfo.decrypt_errors} account(s) have decryption errors. Re-enter their API keys or rotate the account key.
+              </div>
+            )}
+
+            {/* Rotate feedback */}
+            {rotateMsg && (
+              <div className={`text-sm px-4 py-2 rounded-lg ${
+                rotateMsg.ok
+                  ? "text-green-400 bg-green-500/10 border border-green-500/20"
+                  : "text-red-400 bg-red-500/10 border border-red-500/20"
+              }`}>
+                {rotateMsg.text}
+              </div>
+            )}
+
+            {/* Account Key */}
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <p className="text-sm font-medium text-gray-200">Account Key</p>
+                <p className="text-xs text-gray-500">
+                  Encrypts API keys and tokens stored in the database
+                </p>
+                <div className="flex items-center gap-3 mt-1">
+                  <code className="text-xs font-mono text-gray-400 bg-gray-800 px-2 py-0.5 rounded">
+                    {encryptionInfo.account_key.fingerprint}
+                  </code>
+                  <span className="text-xs text-gray-500">
+                    Source: {encryptionInfo.account_key.source}
+                  </span>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleRotateAccountKey}
+                loading={rotatingAccount}
+                disabled={encryptionInfo.account_key.source === "env"}
+              >
+                Rotate
+              </Button>
+            </div>
+
+            <div className="border-t border-gray-800" />
+
+            {/* Guardrail Seed */}
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <p className="text-sm font-medium text-gray-200">Guardrail Seed</p>
+                <p className="text-xs text-gray-500">
+                  Deterministic encryption for privacy anonymization
+                </p>
+                <div className="flex items-center gap-3 mt-1">
+                  <code className="text-xs font-mono text-gray-400 bg-gray-800 px-2 py-0.5 rounded">
+                    {encryptionInfo.guardrail_key.fingerprint}
+                  </code>
+                  <span className="text-xs text-gray-500">
+                    Source: {encryptionInfo.guardrail_key.source}
+                  </span>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleRotateGuardrailKey}
+                loading={rotatingGuardrail}
+                disabled={encryptionInfo.guardrail_key.source === "env"}
+              >
+                Reroll
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Model Limits */}
       <Card

@@ -9,7 +9,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${CLAUDE_DIR:-~/.claude}:/host-claude-rw
     environment:
-      - MASTER_KEY=${MASTER_KEY:-auto}
       - PROXY_API_KEY=${PROXY_API_KEY:-proxy-local-key}
       - UI_PORT=9211
       - PROXY_PORT=9212
