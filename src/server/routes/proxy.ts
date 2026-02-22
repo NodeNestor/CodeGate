@@ -41,7 +41,7 @@ import {
   parseRetryAfter,
 } from "../cooldown-manager.js";
 import { detectTier } from "../model-mapper.js";
-import { recordRequest, isRateLimited } from "../rate-limiter.js";
+import { checkAndRecordRequest, isRateLimited } from "../rate-limiter.js";
 import { clampMaxTokens } from "../model-limits.js";
 import { ensureValidToken, forceSyncFromFile } from "../auth-refresh.js";
 import {
@@ -268,8 +268,9 @@ proxy.all("/v1/*", async (c) => {
       continue;
     }
 
-    // Rate limit check BEFORE sending to provider
-    if (isRateLimited(account.id, account.rate_limit)) {
+    // Atomic rate limit check + record BEFORE sending to provider.
+    // This eliminates the TOCTOU race between checking and recording.
+    if (checkAndRecordRequest(account.id, account.rate_limit)) {
       if (!isLastCandidate) {
         console.log(
           `[proxy] Skipping "${account.name}" (rate limited locally), ${allCandidates.length - i - 1} candidates left`
@@ -289,8 +290,6 @@ proxy.all("/v1/*", async (c) => {
       if (account.auth_type === "oauth") {
         account = await ensureValidToken(account);
       }
-
-      recordRequest(account.id);
 
       const strategy = route.configId ? "config" : "direct";
       console.log(

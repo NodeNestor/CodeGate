@@ -870,3 +870,56 @@ export function deleteOldRequestLogs(daysOld: number): number {
   ).run(`-${daysOld}`);
   return result.changes;
 }
+
+export function clearAllRequestLogs(): number {
+  const d = getDB();
+  const result = d.prepare("DELETE FROM request_logs").run();
+  return result.changes;
+}
+
+export function getRequestLogCount(): number {
+  const d = getDB();
+  const row = d.prepare("SELECT COUNT(*) AS cnt FROM request_logs").get() as { cnt: number };
+  return row.cnt;
+}
+
+// ─── Automatic Log Retention ────────────────────────────────────────────────
+
+const DEFAULT_LOG_RETENTION_DAYS = 30;
+const LOG_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
+
+function getLogRetentionDays(): number {
+  const val = getSetting("log_retention_days");
+  if (val) {
+    const n = parseInt(val, 10);
+    if (!isNaN(n) && n > 0) return n;
+  }
+  return DEFAULT_LOG_RETENTION_DAYS;
+}
+
+/**
+ * Start a periodic cleanup loop that deletes request logs older than the
+ * configured retention period. Runs every 6 hours. Reads the setting
+ * each cycle so changes take effect without restart.
+ */
+let logCleanupStarted = false;
+export function startLogRetentionCleanup(): void {
+  if (logCleanupStarted) return;
+  logCleanupStarted = true;
+
+  function runCleanup() {
+    try {
+      const days = getLogRetentionDays();
+      const deleted = deleteOldRequestLogs(days);
+      if (deleted > 0) {
+        console.log(`[db] Log retention cleanup: deleted ${deleted} logs older than ${days} days`);
+      }
+    } catch (err) {
+      console.error("[db] Log retention cleanup failed:", err);
+    }
+  }
+
+  // Run once immediately on startup, then periodically
+  runCleanup();
+  setInterval(runCleanup, LOG_CLEANUP_INTERVAL_MS);
+}

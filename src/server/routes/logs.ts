@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getRequestLogs, getRequestLog, deleteOldRequestLogs } from "../db.js";
+import { getRequestLogs, getRequestLog, deleteOldRequestLogs, clearAllRequestLogs } from "../db.js";
 
 const logs = new Hono();
 
@@ -30,10 +30,17 @@ logs.get("/:id", (c) => {
   }
 });
 
-// DELETE /api/logs - cleanup old logs
+// DELETE /api/logs - cleanup old logs or clear all
 logs.delete("/", async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
+    const clearAll = (body as any)?.clear_all === true;
+
+    if (clearAll) {
+      const deleted = clearAllRequestLogs();
+      return c.json({ deleted });
+    }
+
     const daysOld = (body as any)?.days_old ?? 7;
     const deleted = deleteOldRequestLogs(daysOld);
     return c.json({ deleted });
