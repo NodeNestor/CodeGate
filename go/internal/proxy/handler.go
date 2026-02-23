@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"codegate-proxy/internal/convert"
 	"codegate-proxy/internal/cooldown"
 	"codegate-proxy/internal/db"
+	"codegate-proxy/internal/guardrails"
 	"codegate-proxy/internal/models"
 	"codegate-proxy/internal/provider"
 	"codegate-proxy/internal/ratelimit"
@@ -55,19 +57,19 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate proxy API key
+	// 1. Validate proxy API key
 	if !validateAPIKey(r) {
 		writeError(w, r, "anthropic", 401, "authentication_error", "Invalid or missing proxy API key")
 		return
 	}
 
-	// Detect inbound format
+	// 2. Detect inbound format from path
 	inboundFormat := "anthropic"
 	if strings.Contains(path, "/chat/completions") {
 		inboundFormat = "openai"
 	}
 
-	// Read request body
+	// 3. Read request body
 	bodyBytes, err := io.ReadAll(r.Body)
 	r.Body.Close()
 	if err != nil {
@@ -75,7 +77,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse body JSON
+	// 4. Parse body JSON
 	var bodyJSON map[string]any
 	originalModel := "claude-sonnet-4-20250514"
 	isStreamRequest := false
@@ -93,12 +95,31 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_ = isStreamRequest // used for logging later
+	_ = isStreamRequest
 
-	// Detect tier
+	// 5. If inbound is OpenAI format, convert to Anthropic internally for routing
+	anthropicBody := bodyJSON
+	if inboundFormat == "openai" && len(bodyBytes) > 0 {
+		converted := convert.OpenAIToAnthropicRequest(bodyJSON)
+		if converted != nil {
+			anthropicBody = converted
+			// Preserve original model for routing
+			if m, ok := bodyJSON["model"].(string); ok {
+				anthropicBody["model"] = m
+			}
+		}
+	}
+
+	// 6. Guardrails: anonymize outgoing request body
+	guardrailsActive := guardrails.IsGuardrailsEnabled()
+	if guardrailsActive && len(bodyBytes) > 0 {
+		anthropicBody = guardrails.RunGuardrailsOnRequestBody(anthropicBody)
+	}
+
+	// 7. Detect tier
 	tier := models.DetectTier(originalModel)
 
-	// Resolve route
+	// 8. Resolve route
 	route, err := routing.Resolve(originalModel)
 	if err != nil {
 		log.Printf("[proxy] Route resolution error: %v", err)
@@ -119,13 +140,13 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	autoSwitchOnError := db.GetSetting("auto_switch_on_error") != "false"
 	autoSwitchOnRateLimit := db.GetSetting("auto_switch_on_rate_limit") != "false"
 
-	// Collect request headers
+	// Collect request headers for forwarding
 	reqHeaders := make(map[string]string)
 	for k := range r.Header {
 		reqHeaders[strings.ToLower(k)] = r.Header.Get(k)
 	}
 
-	// Try each candidate
+	// Try each candidate account in order (primary + fallbacks)
 	for i, cand := range allCandidates {
 		account := cand.Account
 		targetModel := cand.TargetModel
@@ -134,16 +155,15 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		isFailover := i > 0
 		isLastCandidate := i == len(allCandidates)-1
-
 		targetIsAnthropic := account.Provider == "anthropic"
 
-		// Skip cooled-down accounts
+		// Skip cooled-down accounts unless last candidate
 		if !isLastCandidate && cooldown.IsOnCooldown(account.ID) {
 			log.Printf("[proxy] Skipping %q (on cooldown), %d candidates left", account.Name, len(allCandidates)-i-1)
 			continue
 		}
 
-		// Rate limit check
+		// Atomic rate limit check + record
 		if ratelimit.CheckAndRecord(account.ID, account.RateLimit) {
 			if !isLastCandidate {
 				log.Printf("[proxy] Skipping %q (rate limited), %d candidates left", account.Name, len(allCandidates)-i-1)
@@ -154,32 +174,35 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Determine forward path and body based on format conversion needs
+		// ── Decide conversion path ──────────────────────────────
 		var forwardPath string
 		var forwardBody string
 
 		if inboundFormat == "openai" && !targetIsAnthropic {
-			// OpenAI → OpenAI: forward as-is with model swap
-			bodyJSON["model"] = targetModel
-			b, _ := json.Marshal(bodyJSON)
+			// OpenAI client → OpenAI-compatible provider: forward original body with model swap
+			forwardJSON := deepCopy(bodyJSON)
+			forwardJSON["model"] = targetModel
+			b, _ := json.Marshal(forwardJSON)
 			forwardBody = string(b)
 			forwardPath = "/v1/chat/completions"
 		} else if inboundFormat == "openai" && targetIsAnthropic {
-			// OpenAI → Anthropic: TODO format conversion (for now, basic pass-through)
-			bodyJSON["model"] = targetModel
-			b, _ := json.Marshal(bodyJSON)
+			// OpenAI client → Anthropic provider: use converted anthropic body
+			forwardJSON := deepCopy(anthropicBody)
+			forwardJSON["model"] = targetModel
+			b, _ := json.Marshal(forwardJSON)
 			forwardBody = string(b)
-			forwardPath = "/v1/chat/completions" // Will need conversion
+			forwardPath = "/v1/messages"
 		} else if inboundFormat == "anthropic" && !targetIsAnthropic {
-			// Anthropic → OpenAI: TODO format conversion (for now, basic pass-through)
-			bodyJSON["model"] = targetModel
-			b, _ := json.Marshal(bodyJSON)
+			// Anthropic client → OpenAI-compatible provider: convert to OpenAI format
+			openaiBody := convert.AnthropicToOpenAI(anthropicBody, targetModel)
+			b, _ := json.Marshal(openaiBody)
 			forwardBody = string(b)
 			forwardPath = "/v1/chat/completions"
 		} else {
-			// Anthropic → Anthropic: forward as-is with model swap
-			bodyJSON["model"] = targetModel
-			b, _ := json.Marshal(bodyJSON)
+			// Anthropic client → Anthropic provider: forward as-is
+			forwardJSON := deepCopy(anthropicBody)
+			forwardJSON["model"] = targetModel
+			b, _ := json.Marshal(forwardJSON)
 			forwardBody = string(b)
 			forwardPath = "/v1/messages"
 			if strings.HasPrefix(path, "/v1/messages") {
@@ -227,7 +250,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Check for retryable errors
+		// ── Check for retryable errors ──────────────────────────
 		if provResp.Status == 429 {
 			db.UpdateAccountStatus(account.ID, "rate_limited", "Rate limited (429)")
 			db.RecordAccountError(account.ID, "Rate limited (429)")
@@ -248,25 +271,143 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Success tracking
-		if provResp.Status >= 200 && provResp.Status < 300 {
-			db.RecordAccountSuccess(account.ID)
-			cooldown.Clear(account.ID)
-		}
-
-		// Write response headers
+		// ── Handle streaming response ────────────────────────────
 		if provResp.IsStream {
+			if provResp.Status >= 200 && provResp.Status < 300 {
+				db.RecordAccountSuccess(account.ID)
+				cooldown.Clear(account.ID)
+			}
+
+			responseStream := provResp.Body
+
+			// Convert stream format if there's a mismatch
+			if inboundFormat == "anthropic" && !targetIsAnthropic {
+				// Provider sends OpenAI SSE, client wants Anthropic SSE
+				responseStream = convert.ConvertSSEStream(provResp.Body, originalModel)
+			} else if inboundFormat == "openai" && targetIsAnthropic {
+				// Provider sends Anthropic SSE, client wants OpenAI SSE
+				responseStream = convert.ConvertAnthropicSSEToOpenAI(provResp.Body, targetModel)
+			}
+
+			// Guardrails: deanonymize streaming response
+			if guardrailsActive {
+				responseStream = guardrails.CreateDeanonymizeStream(responseStream)
+			}
+
+			// Write SSE response headers
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
-		} else {
-			ct := provResp.Headers["content-type"]
-			if ct == "" {
-				ct = "application/json"
+			w.Header().Set("X-Proxy-Account", account.Name)
+			strategyLabel := strategy
+			if isFailover {
+				strategyLabel = strategy + "+failover"
 			}
-			w.Header().Set("Content-Type", ct)
+			w.Header().Set("X-Proxy-Strategy", strategyLabel)
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Headers", "*")
+			w.Header().Set("Access-Control-Expose-Headers", "x-proxy-account, x-proxy-strategy")
+			w.WriteHeader(provResp.Status)
+
+			// Stream with flushing
+			flusher, hasFlusher := w.(http.Flusher)
+			buf := make([]byte, 32*1024)
+			for {
+				n, readErr := responseStream.Read(buf)
+				if n > 0 {
+					w.Write(buf[:n])
+					if hasFlusher {
+						flusher.Flush()
+					}
+				}
+				if readErr != nil {
+					break
+				}
+			}
+			responseStream.Close()
+
+			// Record usage async
+			latencyMs := int(time.Since(startTime).Milliseconds())
+			go func() {
+				costUSD := models.EstimateCost(targetModel, provResp.InputTokens, provResp.OutputTokens)
+				db.RecordUsage(account.ID, route.ConfigID, string(tier), originalModel, targetModel,
+					provResp.InputTokens, provResp.OutputTokens, provResp.CacheReadTokens, provResp.CacheWriteTokens, costUSD)
+
+				if db.GetSetting("request_logging") == "true" {
+					db.InsertRequestLog(method, path, inboundFormat, account.ID, account.Name, account.Provider,
+						originalModel, targetModel, provResp.Status, provResp.InputTokens, provResp.OutputTokens,
+						latencyMs, true, isFailover, "")
+				}
+			}()
+
+			return
 		}
 
+		// ── Handle non-streaming response ────────────────────────
+		responseBodyBytes, err := io.ReadAll(provResp.Body)
+		provResp.Body.Close()
+		if err != nil {
+			writeError(w, r, inboundFormat, 502, "api_error", "Failed to read provider response")
+			return
+		}
+		responseBodyStr := string(responseBodyBytes)
+
+		// Convert response format if there's a mismatch
+		if provResp.Status >= 200 && provResp.Status < 300 {
+			if inboundFormat == "anthropic" && !targetIsAnthropic {
+				// Provider returned OpenAI format, client wants Anthropic
+				var openaiResp map[string]any
+				if err := json.Unmarshal(responseBodyBytes, &openaiResp); err == nil {
+					anthropicResp := convert.OpenAIToAnthropic(openaiResp, originalModel)
+					if b, err := json.Marshal(anthropicResp); err == nil {
+						responseBodyStr = string(b)
+					}
+				}
+			} else if inboundFormat == "openai" && targetIsAnthropic {
+				// Provider returned Anthropic format, client wants OpenAI
+				var anthropicResp map[string]any
+				if err := json.Unmarshal(responseBodyBytes, &anthropicResp); err == nil {
+					openaiResp := convert.AnthropicToOpenAIResponse(anthropicResp, targetModel)
+					if b, err := json.Marshal(openaiResp); err == nil {
+						responseBodyStr = string(b)
+					}
+				}
+			}
+		} else {
+			// Error response: convert to the client's expected error format
+			if inboundFormat == "openai" {
+				responseBodyStr = toOpenAIError(responseBodyStr, provResp.Status, account.Provider)
+			} else if !targetIsAnthropic {
+				responseBodyStr = toAnthropicError(responseBodyStr, provResp.Status, account.Provider)
+			}
+		}
+
+		// Guardrails: deanonymize non-streaming response
+		if guardrailsActive {
+			responseBodyStr = guardrails.Deanonymize(responseBodyStr)
+		}
+
+		// Track account status
+		if provResp.Status >= 200 && provResp.Status < 300 {
+			db.RecordAccountSuccess(account.ID)
+			cooldown.Clear(account.ID)
+		} else if provResp.Status == 401 {
+			db.UpdateAccountStatus(account.ID, "expired", "Authentication failed (401)")
+			db.RecordAccountError(account.ID, "Authentication failed (401)")
+		} else if provResp.Status == 429 {
+			db.UpdateAccountStatus(account.ID, "rate_limited", "Rate limited (429)")
+			db.RecordAccountError(account.ID, "Rate limited (429)")
+		} else if provResp.Status >= 400 {
+			db.RecordAccountError(account.ID, fmt.Sprintf("HTTP %d", provResp.Status))
+			db.UpdateAccountStatus(account.ID, "error", fmt.Sprintf("HTTP %d", provResp.Status))
+		}
+
+		upstreamContentType := provResp.Headers["content-type"]
+		if upstreamContentType == "" {
+			upstreamContentType = "application/json"
+		}
+
+		w.Header().Set("Content-Type", upstreamContentType)
 		w.Header().Set("X-Proxy-Account", account.Name)
 		strategyLabel := strategy
 		if isFailover {
@@ -276,32 +417,10 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
 		w.Header().Set("Access-Control-Expose-Headers", "x-proxy-account, x-proxy-strategy")
-
 		w.WriteHeader(provResp.Status)
+		w.Write([]byte(responseBodyStr))
 
-		// Stream/copy response body
-		if provResp.IsStream {
-			// Use flusher for SSE
-			flusher, ok := w.(http.Flusher)
-			buf := make([]byte, 32*1024)
-			for {
-				n, readErr := provResp.Body.Read(buf)
-				if n > 0 {
-					w.Write(buf[:n])
-					if ok {
-						flusher.Flush()
-					}
-				}
-				if readErr != nil {
-					break
-				}
-			}
-		} else {
-			io.Copy(w, provResp.Body)
-		}
-		provResp.Body.Close()
-
-		// Record usage asynchronously
+		// Record usage async
 		latencyMs := int(time.Since(startTime).Milliseconds())
 		go func() {
 			costUSD := models.EstimateCost(targetModel, provResp.InputTokens, provResp.OutputTokens)
@@ -309,9 +428,17 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 				provResp.InputTokens, provResp.OutputTokens, provResp.CacheReadTokens, provResp.CacheWriteTokens, costUSD)
 
 			if db.GetSetting("request_logging") == "true" {
+				errMessage := ""
+				if provResp.Status >= 400 {
+					if len(responseBodyStr) > 1000 {
+						errMessage = responseBodyStr[:1000]
+					} else {
+						errMessage = responseBodyStr
+					}
+				}
 				db.InsertRequestLog(method, path, inboundFormat, account.ID, account.Name, account.Provider,
 					originalModel, targetModel, provResp.Status, provResp.InputTokens, provResp.OutputTokens,
-					latencyMs, provResp.IsStream, isFailover, "")
+					latencyMs, false, isFailover, errMessage)
 			}
 		}()
 
@@ -320,6 +447,78 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	// All candidates exhausted
 	writeError(w, r, inboundFormat, 502, "api_error", "No accounts available after exhausting all candidates")
+}
+
+// ─── Error format helpers ───────────────────────────────────────────────────
+
+func toOpenAIError(rawBody string, status int, providerName string) string {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(rawBody), &parsed); err == nil {
+		errMsg := extractErrorMessage(parsed, providerName, status)
+		b, _ := json.Marshal(map[string]any{
+			"error": map[string]any{"message": errMsg, "type": "server_error", "code": status},
+		})
+		return string(b)
+	}
+	b, _ := json.Marshal(map[string]any{
+		"error": map[string]any{"message": fmt.Sprintf("Provider %s returned HTTP %d", providerName, status), "type": "server_error", "code": status},
+	})
+	return string(b)
+}
+
+func toAnthropicError(rawBody string, status int, providerName string) string {
+	var parsed map[string]any
+	errType := "api_error"
+	switch {
+	case status == 401:
+		errType = "authentication_error"
+	case status == 404:
+		errType = "not_found_error"
+	case status == 429:
+		errType = "rate_limit_error"
+	case status >= 500:
+		errType = "api_error"
+	default:
+		errType = "invalid_request_error"
+	}
+
+	if err := json.Unmarshal([]byte(rawBody), &parsed); err == nil {
+		errMsg := extractErrorMessage(parsed, providerName, status)
+		b, _ := json.Marshal(map[string]any{
+			"type":  "error",
+			"error": map[string]any{"type": errType, "message": errMsg},
+		})
+		return string(b)
+	}
+	b, _ := json.Marshal(map[string]any{
+		"type":  "error",
+		"error": map[string]any{"type": errType, "message": fmt.Sprintf("Provider %s returned HTTP %d", providerName, status)},
+	})
+	return string(b)
+}
+
+func extractErrorMessage(parsed map[string]any, providerName string, status int) string {
+	if errObj, ok := parsed["error"].(map[string]any); ok {
+		if msg, ok := errObj["message"].(string); ok {
+			return msg
+		}
+	}
+	if msg, ok := parsed["message"].(string); ok {
+		return msg
+	}
+	if detail, ok := parsed["detail"].(string); ok {
+		return detail
+	}
+	return fmt.Sprintf("Provider %s returned HTTP %d", providerName, status)
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+func deepCopy(m map[string]any) map[string]any {
+	b, _ := json.Marshal(m)
+	var result map[string]any
+	json.Unmarshal(b, &result)
+	return result
 }
 
 func validateAPIKey(r *http.Request) bool {

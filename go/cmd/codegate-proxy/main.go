@@ -2,6 +2,7 @@ package main
 
 import (
 	"codegate-proxy/internal/db"
+	"codegate-proxy/internal/guardrails"
 	"codegate-proxy/internal/proxy"
 	"fmt"
 	"log"
@@ -21,6 +22,14 @@ func main() {
 		log.Fatalf("Failed to open database: %v", err)
 	}
 	defer db.Close()
+
+	// Initialize guardrails (anonymize/deanonymize pipeline)
+	guardrails.InitGuardrails()
+	if guardrails.IsGuardrailsEnabled() {
+		log.Println("Guardrails enabled")
+	} else {
+		log.Println("Guardrails disabled (no guardrail key found)")
+	}
 
 	handler := proxy.Handler()
 
