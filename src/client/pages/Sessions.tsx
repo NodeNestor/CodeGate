@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Plus, Terminal, Loader2 } from "lucide-react";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
@@ -136,25 +137,7 @@ export default function Sessions() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <svg
-          className="h-8 w-8 animate-spin text-brand-500"
-          fill="none"
-          viewBox="0 0 24 24"
-        >
-          <circle
-            className="opacity-25"
-            cx="12"
-            cy="12"
-            r="10"
-            stroke="currentColor"
-            strokeWidth="4"
-          />
-          <path
-            className="opacity-75"
-            fill="currentColor"
-            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-          />
-        </svg>
+        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
       </div>
     );
   }
@@ -172,19 +155,7 @@ export default function Sessions() {
           )}
         </div>
         <Button onClick={handleCreate}>
-          <svg
-            className="h-4 w-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M12 4.5v15m7.5-7.5h-15"
-            />
-          </svg>
+          <Plus className="h-4 w-4" />
           New Session
         </Button>
       </div>
@@ -192,44 +163,20 @@ export default function Sessions() {
       {/* Session list or empty state */}
       {sessions.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-64 text-gray-500 space-y-4">
-          <svg
-            className="h-12 w-12 text-gray-600"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={1.5}
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z"
-            />
-          </svg>
+          <Terminal className="h-12 w-12 text-gray-600" />
           <p className="text-lg">No active sessions.</p>
           <p className="text-sm">
             Create a new terminal session to get started.
           </p>
           <Button onClick={handleCreate}>
-            <svg
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 4.5v15m7.5-7.5h-15"
-              />
-            </svg>
+            <Plus className="h-4 w-4" />
             New Session
           </Button>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {sessions.map((session) => (
-            <Card key={session.id}>
+            <Card key={session.id} className="hover:border-gray-700 transition-colors">
               <div className="flex items-start justify-between mb-3">
                 <div className="min-w-0 flex-1">
                   <h3 className="text-base font-semibold text-gray-100 truncate">
@@ -269,19 +216,7 @@ export default function Sessions() {
                   onClick={() => handleOpenTerminal(session.port)}
                   disabled={!session.port || session.status !== "running"}
                 >
-                  <svg
-                    className="h-3.5 w-3.5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3"
-                    />
-                  </svg>
+                  <Terminal className="h-3.5 w-3.5" />
                   Open Terminal
                 </Button>
                 <Button
