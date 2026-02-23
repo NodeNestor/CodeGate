@@ -365,7 +365,7 @@ export default function Tenants() {
               key={tenant.id}
               className={`bg-gray-900 border rounded-xl p-5 transition-colors ${
                 tenant.enabled === 1
-                  ? "border-gray-800"
+                  ? "border-gray-800 hover:border-gray-700"
                   : "border-gray-800 opacity-60"
               }`}
             >
