@@ -4,3 +4,7 @@ data/
 *.db
 .master-key
 .env
+
+# Go
+bin/codegate-proxy*
+go/go.sum
