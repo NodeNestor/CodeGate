@@ -532,22 +532,41 @@ func createPasswordGuardrail() Guardrail {
 	}
 }
 
-// ─── Name guardrail (STUB) ──────────────────────────────────────────────────
+// ─── Name guardrail ─────────────────────────────────────────────────────────
 
-// TODO: Implement the full name guardrail with 4 detection strategies:
-// 1. Known "FirstName LastName" pairs
-// 2. Context keywords (name:, author:, by:, etc.)
-// 3. Greeting/sign-off patterns (Hello John,)
-// 4. Standalone known first names
-//
-// For now, this is a passthrough stub that does not modify text.
+// Compiled regexes for the four name detection strategies.
+var (
+	// Strategy 1: Known "FirstName LastName" pairs
+	nameFullNameRe = regexp.MustCompile(`\b([A-ZÀ-Ý][a-zA-ZÀ-ÿ]{1,15})\s+([A-ZÀ-Ý][a-zA-ZÀ-ÿ]{1,19})\b`)
+
+	// Strategy 2: Context keywords (name:, author:, by:, etc.)
+	nameContextRe = regexp.MustCompile(`(?i)(?:name|full[_-]?name|display[_-]?name|first[_-]?name|last[_-]?name|author|by|from|contact|assignee|owner|creator|reviewer|committer|signed[_-]?off[_-]?by|co[_-]?authored[_-]?by|reported[_-]?by|assigned[_-]?to)\s*[:=]\s*["']?([A-Z][a-zÀ-ÿ]+(?:\s+[A-Z][a-zÀ-ÿ]+){0,3})["']?`)
+
+	// Strategy 3: Greeting/sign-off patterns
+	nameGreetingRe = regexp.MustCompile(`(?i)(?:hello|hi|hey|dear|thanks|thank you|cheers|regards|sincerely|best|cc|@)\s*,?\s*([A-Z][a-zÀ-ÿ]{1,15})\b`)
+
+	// Strategy 4: Standalone known first names
+	nameStandaloneRe = regexp.MustCompile(`\b([a-zA-ZÀ-ÿ]{2,16})\b`)
+)
+
+// generateNameReplacement produces a deterministic fake name replacement.
+func generateNameReplacement(original string) string {
+	h := hmacHash(original)
+	firstIdx := hexToInt(h[0:8]) % uint64(len(FakeFirstNames))
+	lastIdx := hexToInt(h[8:16]) % uint64(len(FakeLastNames))
+
+	if strings.Contains(original, " ") {
+		return FakeFirstNames[firstIdx] + " " + FakeLastNames[lastIdx]
+	}
+	return FakeFirstNames[firstIdx]
+}
 
 type nameGuardrail struct {
 	config GuardrailConfig
 }
 
-func (g *nameGuardrail) ID() string            { return "name" }
-func (g *nameGuardrail) Config() *GuardrailConfig { return &g.config }
+func (g *nameGuardrail) ID() string               { return "name" }
+func (g *nameGuardrail) Config() *GuardrailConfig  { return &g.config }
 
 func (g *nameGuardrail) ShouldRun(text string, lifecycle string) bool {
 	if !g.config.Enabled {
@@ -557,9 +576,106 @@ func (g *nameGuardrail) ShouldRun(text string, lifecycle string) bool {
 }
 
 func (g *nameGuardrail) Execute(text string) (string, int) {
-	// TODO: Implement name detection and anonymization.
-	// This stub passes text through unchanged.
-	return text, 0
+	result := text
+	count := 0
+
+	// Strategy 1: Known "FirstName LastName" pairs
+	matches := nameFullNameRe.FindAllStringSubmatchIndex(result, -1)
+	if len(matches) > 0 {
+		// Collect valid matches
+		type nameMatch struct {
+			start, end int
+			full       string
+		}
+		var validMatches []nameMatch
+		for _, loc := range matches {
+			fullMatch := result[loc[0]:loc[1]]
+			first := result[loc[2]:loc[3]]
+			last := result[loc[4]:loc[5]]
+			firstLower := strings.ToLower(first)
+			lastLower := strings.ToLower(last)
+
+			if NameStopwords[firstLower] || NameStopwords[lastLower] {
+				continue
+			}
+			if !CommonFirstNames[firstLower] {
+				continue
+			}
+			if !CommonLastNames[lastLower] && !CommonFirstNames[lastLower] {
+				continue
+			}
+			validMatches = append(validMatches, nameMatch{
+				start: loc[0],
+				end:   loc[1],
+				full:  fullMatch,
+			})
+		}
+		// Replace in reverse order to preserve indices
+		for i := len(validMatches) - 1; i >= 0; i-- {
+			m := validMatches[i]
+			replacement := getOrCreateMapping(m.full, "name", generateNameReplacement)
+			result = result[:m.start] + replacement + result[m.end:]
+			count++
+		}
+	}
+
+	// Strategy 2: Context keywords
+	result = nameContextRe.ReplaceAllStringFunc(result, func(fullMatch string) string {
+		subs := nameContextRe.FindStringSubmatch(fullMatch)
+		if len(subs) < 2 {
+			return fullMatch
+		}
+		nameValue := strings.TrimSpace(subs[1])
+		nameLower := strings.ToLower(nameValue)
+		if NameStopwords[nameLower] {
+			return fullMatch
+		}
+		if len(nameValue) < 2 {
+			return fullMatch
+		}
+		replacement := getOrCreateMapping(nameValue, "name", generateNameReplacement)
+		count++
+		return strings.Replace(fullMatch, subs[1], replacement, 1)
+	})
+
+	// Strategy 3: Greeting/sign-off patterns
+	result = nameGreetingRe.ReplaceAllStringFunc(result, func(fullMatch string) string {
+		subs := nameGreetingRe.FindStringSubmatch(fullMatch)
+		if len(subs) < 2 {
+			return fullMatch
+		}
+		name := subs[1]
+		nameLower := strings.ToLower(name)
+		if !CommonFirstNames[nameLower] {
+			return fullMatch
+		}
+		if NameStopwords[nameLower] {
+			return fullMatch
+		}
+		replacement := getOrCreateMapping(name, "name", generateNameReplacement)
+		count++
+		return strings.Replace(fullMatch, name, replacement, 1)
+	})
+
+	// Strategy 4: Standalone known first names
+	result = nameStandaloneRe.ReplaceAllStringFunc(result, func(fullMatch string) string {
+		word := fullMatch
+		wordLower := strings.ToLower(word)
+		if !CommonFirstNames[wordLower] {
+			return fullMatch
+		}
+		if NameStopwords[wordLower] {
+			return fullMatch
+		}
+		if fakeNamesLower[wordLower] {
+			return fullMatch
+		}
+		replacement := getOrCreateMapping(word, "name", generateNameReplacement)
+		count++
+		return replacement
+	})
+
+	return result, count
 }
 
 func createNameGuardrail() Guardrail {

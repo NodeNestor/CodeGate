@@ -1,8 +1,10 @@
 package main
 
 import (
+	"codegate-proxy/internal/auth"
 	"codegate-proxy/internal/db"
 	"codegate-proxy/internal/guardrails"
+	"codegate-proxy/internal/limits"
 	"codegate-proxy/internal/proxy"
 	"fmt"
 	"log"
@@ -30,6 +32,12 @@ func main() {
 	} else {
 		log.Println("Guardrails disabled (no guardrail key found)")
 	}
+
+	// Start OAuth token refresh background loop
+	auth.StartTokenRefreshLoop()
+
+	// Initialize model limits (per-model output token caps)
+	limits.InitModelLimitsTable()
 
 	handler := proxy.Handler()
 
