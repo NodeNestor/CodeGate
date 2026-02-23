@@ -58,7 +58,7 @@ export async function createTerminalSession(name?: string): Promise<{
   try {
     const container = await docker.createContainer({
       Image: SESSION_IMAGE,
-      name: `codeproxy-session-${id.slice(0, 8)}`,
+      name: `codegate-session-${id.slice(0, 8)}`,
       ExposedPorts: { "7681/tcp": {} },
       HostConfig: {
         PortBindings: {
@@ -132,7 +132,7 @@ async function restartSession(sessionId: string): Promise<boolean> {
 
     const container = await docker.createContainer({
       Image: SESSION_IMAGE,
-      name: `codeproxy-session-${sessionId.slice(0, 8)}`,
+      name: `codegate-session-${sessionId.slice(0, 8)}`,
       ExposedPorts: { "7681/tcp": {} },
       HostConfig: {
         PortBindings: {

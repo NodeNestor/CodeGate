@@ -15,12 +15,27 @@ services:
       - DOCKER_SOCKET=/var/run/docker.sock
       - SESSION_NETWORK=codegate_proxy-net
     restart: unless-stopped
+    depends_on:
+      session-image:
+        condition: service_completed_successfully
+    networks:
+      - proxy-net
+
+  session-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.session
+    image: codegate-session
+    command: ["echo", "codegate-session image ready"]
+    restart: "no"
     networks:
       - proxy-net
 
 volumes:
   proxy-data:
+    name: codegate-data
 
 networks:
   proxy-net:
+    name: codegate_proxy-net
     driver: bridge
