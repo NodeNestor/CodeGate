@@ -770,6 +770,12 @@ func IsGuardrailsEnabled() bool {
 	return val == "true" || val == "1"
 }
 
+// IsGuardrailsEnabledWith checks if guardrails are enabled using a custom settings function.
+func IsGuardrailsEnabledWith(getSetting func(string) string) bool {
+	val := getSetting("privacy_enabled")
+	return val == "true" || val == "1"
+}
+
 // ─── Pipeline execution ──────────────────────────────────────────────────────
 
 // RunGuardrails runs all applicable guardrails on a text string.

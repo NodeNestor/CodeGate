@@ -15,6 +15,7 @@ import setupRouter from "./routes/setup.js";
 import proxyRouter from "./routes/proxy.js";
 import privacyRouter, { guardrailsRouter } from "./routes/privacy.js";
 import logsRouter from "./routes/logs.js";
+import tenantsRouter from "./routes/tenants.js";
 import { startTokenRefreshLoop } from "./auth-refresh.js";
 import { initGuardrails } from "./guardrails/manager.js";
 import { initSessionManager } from "./session-manager.js";
@@ -64,6 +65,7 @@ ui.route("/api/setup", setupRouter);
 ui.route("/api/privacy", privacyRouter);
 ui.route("/api/guardrails", guardrailsRouter);
 ui.route("/api/logs", logsRouter);
+ui.route("/api/tenants", tenantsRouter);
 
 // Serve static files from dist/client for SPA
 ui.use(

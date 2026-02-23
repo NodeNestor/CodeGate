@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import { encrypt, decrypt, tryDecrypt, decryptWithKey, encryptWithKey } from "./encryption.js";
 
@@ -143,6 +144,22 @@ export interface Session {
   last_active_at: string;
 }
 
+export interface Tenant {
+  id: string;
+  name: string;
+  api_key_hash: string;
+  api_key_prefix: string;
+  config_id: string | null;
+  rate_limit: number;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TenantWithSettings extends Omit<Tenant, "api_key_hash"> {
+  settings: Record<string, string>;
+}
+
 // ─── Init ───────────────────────────────────────────────────────────────────
 
 export function initDB(): Database.Database {
@@ -266,6 +283,27 @@ export function initDB(): Database.Database {
       response_body TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS tenants (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        api_key_hash TEXT NOT NULL UNIQUE,
+        api_key_prefix TEXT NOT NULL,
+        config_id TEXT REFERENCES configs(id),
+        rate_limit INTEGER DEFAULT 0,
+        enabled INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS tenant_settings (
+        tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        value TEXT,
+        PRIMARY KEY (tenant_id, key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tenants_hash ON tenants(api_key_hash);
+
     CREATE INDEX IF NOT EXISTS idx_privacy_hash ON privacy_mappings(original_hash);
     CREATE INDEX IF NOT EXISTS idx_privacy_replacement ON privacy_mappings(replacement);
     CREATE INDEX IF NOT EXISTS idx_request_logs_timestamp ON request_logs(timestamp);
@@ -286,6 +324,15 @@ export function initDB(): Database.Database {
   const sessionCols = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
   const sessionColNames = new Set(sessionCols.map((c) => c.name));
   if (!sessionColNames.has("account_id")) db.exec("ALTER TABLE sessions ADD COLUMN account_id TEXT");
+
+  // Tenant column migrations for usage and request_logs
+  const usageCols = db.prepare("PRAGMA table_info(usage)").all() as Array<{ name: string }>;
+  const usageColNames = new Set(usageCols.map((c) => c.name));
+  if (!usageColNames.has("tenant_id")) db.exec("ALTER TABLE usage ADD COLUMN tenant_id TEXT");
+
+  const logCols = db.prepare("PRAGMA table_info(request_logs)").all() as Array<{ name: string }>;
+  const logColNames = new Set(logCols.map((c) => c.name));
+  if (!logColNames.has("tenant_id")) db.exec("ALTER TABLE request_logs ADD COLUMN tenant_id TEXT");
 
   return db;
 }
@@ -881,6 +928,120 @@ export function getRequestLogCount(): number {
   const d = getDB();
   const row = d.prepare("SELECT COUNT(*) AS cnt FROM request_logs").get() as { cnt: number };
   return row.cnt;
+}
+
+// ─── Tenant CRUD ─────────────────────────────────────────────────────────────
+
+function hashApiKey(rawKey: string): string {
+  return crypto.createHash("sha256").update(rawKey).digest("hex");
+}
+
+function generateTenantApiKey(): string {
+  return "cgk_" + crypto.randomBytes(16).toString("hex");
+}
+
+export function createTenant(data: {
+  name: string;
+  config_id?: string;
+  rate_limit?: number;
+}): { tenant: Tenant; raw_api_key: string } {
+  const d = getDB();
+  const id = uuidv4();
+  const rawKey = generateTenantApiKey();
+  const keyHash = hashApiKey(rawKey);
+  const prefix = rawKey.substring(0, 8);
+
+  d.prepare(
+    `INSERT INTO tenants (id, name, api_key_hash, api_key_prefix, config_id, rate_limit)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(id, data.name, keyHash, prefix, data.config_id ?? null, data.rate_limit ?? 0);
+
+  const tenant = d.prepare("SELECT * FROM tenants WHERE id = ?").get(id) as Tenant;
+  return { tenant, raw_api_key: rawKey };
+}
+
+export function getTenants(): Omit<Tenant, "api_key_hash">[] {
+  return getDB().prepare(
+    "SELECT id, name, api_key_prefix, config_id, rate_limit, enabled, created_at, updated_at FROM tenants ORDER BY name ASC"
+  ).all() as Omit<Tenant, "api_key_hash">[];
+}
+
+export function getTenant(id: string): TenantWithSettings | undefined {
+  const d = getDB();
+  const tenant = d.prepare(
+    "SELECT id, name, api_key_prefix, config_id, rate_limit, enabled, created_at, updated_at FROM tenants WHERE id = ?"
+  ).get(id) as Omit<Tenant, "api_key_hash"> | undefined;
+  if (!tenant) return undefined;
+  const settings = getTenantSettings(id);
+  return { ...tenant, settings };
+}
+
+export function updateTenant(
+  id: string,
+  updates: Partial<{ name: string; config_id: string | null; rate_limit: number; enabled: number }>
+): Tenant | undefined {
+  const d = getDB();
+  const existing = d.prepare("SELECT * FROM tenants WHERE id = ?").get(id) as Tenant | undefined;
+  if (!existing) return undefined;
+
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if (updates.name !== undefined) { sets.push("name = ?"); values.push(updates.name); }
+  if (updates.config_id !== undefined) { sets.push("config_id = ?"); values.push(updates.config_id); }
+  if (updates.rate_limit !== undefined) { sets.push("rate_limit = ?"); values.push(updates.rate_limit); }
+  if (updates.enabled !== undefined) { sets.push("enabled = ?"); values.push(updates.enabled); }
+  if (sets.length === 0) return existing;
+
+  sets.push("updated_at = datetime('now')");
+  values.push(id);
+  d.prepare(`UPDATE tenants SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  return d.prepare("SELECT * FROM tenants WHERE id = ?").get(id) as Tenant;
+}
+
+export function deleteTenant(id: string): boolean {
+  const d = getDB();
+  d.prepare("UPDATE usage SET tenant_id = NULL WHERE tenant_id = ?").run(id);
+  d.prepare("UPDATE request_logs SET tenant_id = NULL WHERE tenant_id = ?").run(id);
+  return d.prepare("DELETE FROM tenants WHERE id = ?").run(id).changes > 0;
+}
+
+export function rotateTenantKey(id: string): { tenant: Tenant; raw_api_key: string } | undefined {
+  const d = getDB();
+  const existing = d.prepare("SELECT * FROM tenants WHERE id = ?").get(id) as Tenant | undefined;
+  if (!existing) return undefined;
+
+  const rawKey = generateTenantApiKey();
+  const keyHash = hashApiKey(rawKey);
+  const prefix = rawKey.substring(0, 8);
+
+  d.prepare("UPDATE tenants SET api_key_hash = ?, api_key_prefix = ?, updated_at = datetime('now') WHERE id = ?").run(keyHash, prefix, id);
+  const tenant = d.prepare("SELECT * FROM tenants WHERE id = ?").get(id) as Tenant;
+  return { tenant, raw_api_key: rawKey };
+}
+
+export function getTenantSettings(tenantId: string): Record<string, string> {
+  const rows = getDB().prepare("SELECT key, value FROM tenant_settings WHERE tenant_id = ?").all(tenantId) as Array<{ key: string; value: string }>;
+  const result: Record<string, string> = {};
+  for (const row of rows) result[row.key] = row.value;
+  return result;
+}
+
+export function setTenantSetting(tenantId: string, key: string, value: string): void {
+  getDB().prepare(
+    `INSERT INTO tenant_settings (tenant_id, key, value) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO UPDATE SET value = excluded.value`
+  ).run(tenantId, key, value);
+}
+
+export function deleteTenantSetting(tenantId: string, key: string): boolean {
+  return getDB().prepare("DELETE FROM tenant_settings WHERE tenant_id = ? AND key = ?").run(tenantId, key).changes > 0;
+}
+
+export function getTenantByKeyHash(hash: string): Tenant | undefined {
+  return getDB().prepare("SELECT * FROM tenants WHERE api_key_hash = ? AND enabled = 1").get(hash) as Tenant | undefined;
+}
+
+export function hasTenants(): boolean {
+  return getDB().prepare("SELECT 1 FROM tenants LIMIT 1").get() !== undefined;
 }
 
 // ─── Automatic Log Retention ────────────────────────────────────────────────

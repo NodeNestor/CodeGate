@@ -476,3 +476,81 @@ export async function deleteModelLimit(
     { method: "DELETE" }
   );
 }
+
+// ── Tenants ──────────────────────────────────────────────────────────────────
+
+export interface Tenant {
+  id: string;
+  name: string;
+  api_key_prefix: string;
+  config_id: string | null;
+  rate_limit: number;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TenantWithSettings extends Tenant {
+  settings: Record<string, string>;
+}
+
+export interface TenantCreateResponse {
+  tenant: Tenant;
+  api_key: string;
+  warning: string;
+}
+
+export async function getTenants(): Promise<Tenant[]> {
+  return request<Tenant[]>("/tenants");
+}
+
+export async function createTenant(data: {
+  name: string;
+  config_id?: string;
+  rate_limit?: number;
+}): Promise<TenantCreateResponse> {
+  return request<TenantCreateResponse>("/tenants", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getTenantDetail(id: string): Promise<TenantWithSettings> {
+  return request<TenantWithSettings>(`/tenants/${id}`);
+}
+
+export async function updateTenant(
+  id: string,
+  data: Partial<{ name: string; config_id: string | null; rate_limit: number; enabled: number }>
+): Promise<Tenant> {
+  return request<Tenant>(`/tenants/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteTenant(id: string): Promise<void> {
+  return request<void>(`/tenants/${id}`, { method: "DELETE" });
+}
+
+export async function getTenantSettings(id: string): Promise<Record<string, string>> {
+  return request<Record<string, string>>(`/tenants/${id}/settings`);
+}
+
+export async function updateTenantSettings(
+  id: string,
+  settings: Record<string, string>
+): Promise<Record<string, string>> {
+  return request<Record<string, string>>(`/tenants/${id}/settings`, {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
+}
+
+export async function deleteTenantSetting(id: string, key: string): Promise<void> {
+  return request<void>(`/tenants/${id}/settings/${key}`, { method: "DELETE" });
+}
+
+export async function rotateTenantKey(id: string): Promise<TenantCreateResponse> {
+  return request<TenantCreateResponse>(`/tenants/${id}/rotate-key`, { method: "POST" });
+}
