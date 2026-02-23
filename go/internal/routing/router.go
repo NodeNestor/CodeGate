@@ -5,6 +5,7 @@ import (
 	"codegate-proxy/internal/db"
 	"codegate-proxy/internal/models"
 	"codegate-proxy/internal/ratelimit"
+	"codegate-proxy/internal/tenant"
 	"sort"
 	"sync"
 	"time"
@@ -31,11 +32,29 @@ var (
 	roundRobinCounters = make(map[string]int)
 )
 
-// Resolve resolves a route for a given model.
+// Resolve resolves a route for a given model using the global active config.
 func Resolve(model string) (*ResolvedRoute, error) {
+	return resolveWithConfigID(model, "")
+}
+
+// ResolveForTenant resolves a route with tenant-scoped config.
+func ResolveForTenant(model string, t *tenant.Tenant) (*ResolvedRoute, error) {
+	if t == nil || t.ConfigID == "" {
+		return Resolve(model)
+	}
+	return resolveWithConfigID(model, t.ConfigID)
+}
+
+func resolveWithConfigID(model string, configID string) (*ResolvedRoute, error) {
 	tier := models.DetectTier(model)
 
-	activeConfig, err := db.GetActiveConfig()
+	var activeConfig *db.Config
+	var err error
+	if configID != "" {
+		activeConfig, err = db.GetConfigByID(configID)
+	} else {
+		activeConfig, err = db.GetActiveConfig()
+	}
 	if err != nil {
 		return nil, err
 	}

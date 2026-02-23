@@ -11,6 +11,7 @@ import (
 	"codegate-proxy/internal/provider"
 	"codegate-proxy/internal/ratelimit"
 	"codegate-proxy/internal/routing"
+	"codegate-proxy/internal/tenant"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,16 +60,45 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Validate proxy API key
-	if !validateAPIKey(r) {
+	// 1. Tenant-aware authentication
+	apiKey := extractAPIKey(r)
+	var tenantCtx *tenant.Tenant
+
+	globalKey := getEnvDefault("PROXY_API_KEY", "")
+	if globalKey != "" && apiKey == globalKey {
+		// Global key matched — no tenant, backward compat
+	} else if tenant.HasTenants() {
+		tenantCtx = tenant.Resolve(apiKey)
+		if tenantCtx == nil {
+			writeError(w, r, "anthropic", 401, "authentication_error", "Invalid API key")
+			return
+		}
+	} else if globalKey != "" {
 		writeError(w, r, "anthropic", 401, "authentication_error", "Invalid or missing proxy API key")
 		return
+	}
+	// else: no global key AND no tenants = open proxy (current behavior)
+
+	// 1.5 Tenant-level rate limiting
+	if tenantCtx != nil && tenantCtx.RateLimit > 0 {
+		if ratelimit.CheckAndRecord("tenant:"+tenantCtx.ID, tenantCtx.RateLimit) {
+			writeError(w, r, "anthropic", 429, "rate_limit_error", "Rate limit exceeded")
+			return
+		}
 	}
 
 	// 2. Detect inbound format from path
 	inboundFormat := "anthropic"
 	if strings.Contains(path, "/chat/completions") {
 		inboundFormat = "openai"
+	}
+
+	// Settings helper: tenant-scoped if available
+	getSetting := db.GetSetting
+	if tenantCtx != nil {
+		getSetting = func(key string) string {
+			return tenant.GetSetting(tenantCtx, key)
+		}
 	}
 
 	// 3. Read request body
@@ -113,7 +143,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 6. Guardrails: anonymize outgoing request body
-	guardrailsActive := guardrails.IsGuardrailsEnabled()
+	guardrailsActive := guardrails.IsGuardrailsEnabledWith(getSetting)
 	if guardrailsActive && len(bodyBytes) > 0 {
 		anthropicBody = guardrails.RunGuardrailsOnRequestBody(anthropicBody)
 	}
@@ -138,7 +168,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	tier := models.DetectTier(originalModel)
 
 	// 8. Resolve route
-	route, err := routing.Resolve(originalModel)
+	route, err := routing.ResolveForTenant(originalModel, tenantCtx)
 	if err != nil {
 		log.Printf("[proxy] Route resolution error: %v", err)
 		writeError(w, r, inboundFormat, 503, "overloaded_error", "Route resolution failed")
@@ -155,8 +185,8 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	allCandidates = append(allCandidates, route.Fallbacks...)
 	allCandidates = routing.SortByCooldown(allCandidates)
 
-	autoSwitchOnError := db.GetSetting("auto_switch_on_error") != "false"
-	autoSwitchOnRateLimit := db.GetSetting("auto_switch_on_rate_limit") != "false"
+	autoSwitchOnError := getSetting("auto_switch_on_error") != "false"
+	autoSwitchOnRateLimit := getSetting("auto_switch_on_rate_limit") != "false"
 
 	// Collect request headers for forwarding
 	reqHeaders := make(map[string]string)
@@ -324,6 +354,9 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
 			w.Header().Set("X-Proxy-Account", account.Name)
+			if tenantCtx != nil {
+				w.Header().Set("X-Proxy-Tenant", tenantCtx.Name)
+			}
 			strategyLabel := strategy
 			if isFailover {
 				strategyLabel = strategy + "+failover"
@@ -331,7 +364,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Proxy-Strategy", strategyLabel)
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Headers", "*")
-			w.Header().Set("Access-Control-Expose-Headers", "x-proxy-account, x-proxy-strategy")
+			w.Header().Set("Access-Control-Expose-Headers", "x-proxy-account, x-proxy-strategy, x-proxy-tenant")
 			w.WriteHeader(provResp.Status)
 
 			// Stream with flushing
@@ -358,7 +391,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 				db.RecordUsage(account.ID, route.ConfigID, string(tier), originalModel, targetModel,
 					provResp.InputTokens, provResp.OutputTokens, provResp.CacheReadTokens, provResp.CacheWriteTokens, costUSD)
 
-				if db.GetSetting("request_logging") == "true" {
+				if getSetting("request_logging") == "true" {
 					db.InsertRequestLog(method, path, inboundFormat, account.ID, account.Name, account.Provider,
 						originalModel, targetModel, provResp.Status, provResp.InputTokens, provResp.OutputTokens,
 						latencyMs, true, isFailover, "")
@@ -457,6 +490,9 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", upstreamContentType)
 		w.Header().Set("X-Proxy-Account", account.Name)
+		if tenantCtx != nil {
+			w.Header().Set("X-Proxy-Tenant", tenantCtx.Name)
+		}
 		strategyLabel := strategy
 		if isFailover {
 			strategyLabel = strategy + "+failover"
@@ -464,7 +500,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Proxy-Strategy", strategyLabel)
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "x-proxy-account, x-proxy-strategy")
+		w.Header().Set("Access-Control-Expose-Headers", "x-proxy-account, x-proxy-strategy, x-proxy-tenant")
 		w.WriteHeader(provResp.Status)
 		w.Write([]byte(responseBodyStr))
 
@@ -475,7 +511,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			db.RecordUsage(account.ID, route.ConfigID, string(tier), originalModel, targetModel,
 				provResp.InputTokens, provResp.OutputTokens, provResp.CacheReadTokens, provResp.CacheWriteTokens, costUSD)
 
-			if db.GetSetting("request_logging") == "true" {
+			if getSetting("request_logging") == "true" {
 				errMessage := ""
 				if provResp.Status >= 400 {
 					if len(responseBodyStr) > 1000 {
@@ -595,6 +631,17 @@ func writeError(w http.ResponseWriter, r *http.Request, inboundFormat string, st
 	} else {
 		fmt.Fprintf(w, `{"type":"error","error":{"type":%q,"message":%q}}`, errType, message)
 	}
+}
+
+func extractAPIKey(r *http.Request) string {
+	if key := r.Header.Get("X-Api-Key"); key != "" {
+		return key
+	}
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		return authHeader[7:]
+	}
+	return ""
 }
 
 func withCORS(next http.Handler) http.Handler {
