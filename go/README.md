@@ -69,11 +69,17 @@ make build
 - [x] Provider dispatch (Anthropic, OpenAI, OpenRouter, custom)
 - [x] Async usage recording
 - [x] Request logging
+- [x] Format conversion (Anthropic <-> OpenAI, both directions)
+- [x] Stream format conversion (Anthropic SSE <-> OpenAI SSE)
+- [x] Guardrails pipeline (anonymize/deanonymize)
+- [x] 12 pattern-based guardrails (email, phone, SSN, credit card, etc.)
+- [x] API key detection (40+ vendor prefixes + entropy analysis)
+- [x] Password detection (key-value, URL, connection string)
+- [x] Deterministic AES-256-CTR encryption for guardrails
+- [x] SSE stream deanonymization
 
 ## TODO (next phases)
 
-- [ ] Format conversion (Anthropic <-> OpenAI)
-- [ ] Guardrails pipeline (anonymize/deanonymize)
+- [ ] Name guardrail (full dictionary port)
 - [ ] OAuth token refresh
 - [ ] Model limits / max_tokens clamping
-- [ ] Stream format conversion (Anthropic SSE <-> OpenAI SSE)
