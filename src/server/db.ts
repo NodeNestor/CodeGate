@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { encrypt, decrypt, tryDecrypt, decryptWithKey, encryptWithKey } from "./encryption.js";
 
 const DATA_DIR = process.env.DATA_DIR || "./data";
-const DB_PATH = path.join(DATA_DIR, "code-proxy.db");
+const DB_PATH = path.join(DATA_DIR, "codegate.db");
 
 let db: Database.Database;
 

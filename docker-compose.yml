@@ -13,7 +13,7 @@ services:
       - UI_PORT=9211
       - PROXY_PORT=9212
       - DOCKER_SOCKET=/var/run/docker.sock
-      - SESSION_NETWORK=code-proxy_proxy-net
+      - SESSION_NETWORK=codegate_proxy-net
     restart: unless-stopped
     networks:
       - proxy-net
