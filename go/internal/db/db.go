@@ -268,6 +268,83 @@ func InsertRequestLog(method, path, inboundFormat, accountID, accountName, provi
 		generateID(), method, path, inboundFormat, accountID, accountName, provider, originalModel, routedModel, statusCode, inputTokens, outputTokens, latencyMs, streamInt, failoverInt, nullStr(errorMessage))
 }
 
+// TenantRow represents a tenant from the database.
+type TenantRow struct {
+	ID        string
+	Name      string
+	ConfigID  string
+	RateLimit int
+	Enabled   bool
+}
+
+// GetTenantByKeyHash looks up a tenant by API key hash.
+func GetTenantByKeyHash(hash string) *TenantRow {
+	if conn == nil {
+		return nil
+	}
+	row := conn.QueryRow(
+		"SELECT id, name, COALESCE(config_id, ''), rate_limit, enabled FROM tenants WHERE api_key_hash = ? AND enabled = 1",
+		hash,
+	)
+	var t TenantRow
+	var enabledInt int
+	err := row.Scan(&t.ID, &t.Name, &t.ConfigID, &t.RateLimit, &enabledInt)
+	if err != nil {
+		return nil
+	}
+	t.Enabled = enabledInt == 1
+	return &t
+}
+
+// GetTenantSettings returns all settings for a tenant.
+func GetTenantSettings(tenantID string) map[string]string {
+	if conn == nil {
+		return nil
+	}
+	rows, err := conn.Query("SELECT key, value FROM tenant_settings WHERE tenant_id = ?", tenantID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	settings := make(map[string]string)
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err == nil {
+			settings[k] = v
+		}
+	}
+	return settings
+}
+
+// HasTenants checks if any tenants exist. Returns false if table doesn't exist.
+func HasTenants() bool {
+	if conn == nil {
+		return false
+	}
+	var dummy int
+	err := conn.QueryRow("SELECT 1 FROM tenants LIMIT 1").Scan(&dummy)
+	return err == nil
+}
+
+// GetConfigByID returns a config by its specific ID.
+func GetConfigByID(id string) (*Config, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("db not open")
+	}
+	row := conn.QueryRow("SELECT id, name, COALESCE(description, ''), is_active, COALESCE(routing_strategy, 'priority') FROM configs WHERE id = ?", id)
+	var c Config
+	var isActive int
+	err := row.Scan(&c.ID, &c.Name, &c.Description, &isActive, &c.RoutingStrategy)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c.IsActive = isActive == 1
+	return &c, nil
+}
+
 // writeExec opens a write connection and executes a statement.
 func writeExec(query string, args ...any) {
 	dataDir := os.Getenv("DATA_DIR")
