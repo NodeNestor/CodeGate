@@ -4,10 +4,6 @@ import "strings"
 
 // Name dictionaries for the name guardrail.
 // Contains first/last name sets, stopwords, and fake name pools.
-//
-// TODO: Expand these sets to match the full TypeScript version.
-// The name guardrail is currently a stub (passthrough), so these are
-// only used for reference and future implementation.
 
 // CommonFirstNames contains common first names (lowercase) from multiple cultures.
 var CommonFirstNames = map[string]bool{
@@ -24,6 +20,13 @@ var CommonFirstNames = map[string]bool{
 	"alexander": true, "patrick": true, "jack": true, "dennis": true, "jerry": true,
 	"tyler": true, "aaron": true, "jose": true, "adam": true, "nathan": true,
 	"henry": true, "peter": true, "zachary": true, "douglas": true,
+	"harold": true, "kyle": true, "noah": true, "gerald": true, "ethan": true,
+	"carl": true, "terry": true, "sean": true, "austin": true, "arthur": true,
+	"lawrence": true, "jesse": true, "dylan": true, "bryan": true, "joe": true,
+	"jordan": true, "billy": true, "bruce": true, "albert": true, "willie": true,
+	"gabriel": true, "logan": true, "ralph": true, "roy": true, "eugene": true,
+	"russell": true, "bobby": true, "mason": true, "philip": true, "louis": true,
+	"harry": true, "vincent": true, "martin": true, "elijah": true,
 	// English female
 	"mary": true, "patricia": true, "jennifer": true, "linda": true, "barbara": true,
 	"elizabeth": true, "susan": true, "jessica": true, "sarah": true, "karen": true,
@@ -37,13 +40,25 @@ var CommonFirstNames = map[string]bool{
 	"carolyn": true, "janet": true, "catherine": true, "maria": true, "heather": true,
 	"diane": true, "ruth": true, "julie": true, "olivia": true, "joyce": true,
 	"virginia": true, "victoria": true, "kelly": true, "lauren": true, "christina": true,
+	"joan": true, "evelyn": true, "judith": true, "megan": true, "andrea": true,
+	"cheryl": true, "hannah": true, "jacqueline": true, "martha": true, "gloria": true,
+	"teresa": true, "ann": true, "sara": true, "madison": true, "frances": true,
+	"kathryn": true, "janice": true, "jean": true, "abigail": true, "alice": true,
+	"julia": true, "judy": true, "sophia": true, "denise": true, "doris": true,
+	"marilyn": true, "danielle": true, "beverly": true, "isabella": true, "theresa": true,
+	"diana": true, "natalie": true, "brittany": true, "charlotte": true, "marie": true,
+	"kayla": true, "alexis": true,
 	// Scandinavian
 	"ludde": true, "ludvig": true, "lars": true, "erik": true, "olof": true,
 	"anders": true, "sven": true, "karl": true, "magnus": true, "nils": true,
 	"astrid": true, "ingrid": true, "sigrid": true, "freya": true, "linnea": true,
+	"björn": true, "gunnar": true, "leif": true, "axel": true, "oscar": true,
+	"hugo": true, "elias": true, "liam": true, "ebba": true, "saga": true,
+	"maja": true,
 	// German
 	"hans": true, "fritz": true, "klaus": true, "stefan": true, "wolfgang": true,
 	"petra": true, "monika": true, "ursula": true, "sabine": true, "claudia": true,
+	"dieter": true, "jürgen": true, "uwe": true, "heike": true,
 	// Spanish
 	"carlos": true, "miguel": true, "pedro": true, "pablo": true, "diego": true,
 	"javier": true, "sergio": true, "carmen": true, "elena": true, "lucia": true,
@@ -52,6 +67,7 @@ var CommonFirstNames = map[string]bool{
 	"wei": true, "ming": true, "chen": true, "wang": true, "zhang": true,
 	"liu": true, "yang": true, "huang": true, "yuki": true, "kenji": true,
 	"takashi": true, "hiroshi": true, "naoki": true, "akira": true, "ryu": true,
+	"satoshi": true,
 	// South Asian
 	"raj": true, "priya": true, "amit": true, "rahul": true, "deepak": true,
 	"sanjay": true, "vikram": true, "anil": true, "anita": true, "sunita": true,
@@ -81,18 +97,27 @@ var CommonLastNames = map[string]bool{
 	"price": true, "alvarez": true, "castillo": true, "sanders": true, "patel": true,
 	"myers": true, "long": true, "ross": true, "foster": true, "jimenez": true,
 	"powell": true, "jenkins": true, "perry": true, "russell": true, "sullivan": true,
+	"bell": true, "coleman": true, "butler": true, "henderson": true, "barnes": true,
+	"gonzales": true, "fisher": true, "vasquez": true, "simmons": true, "graham": true,
+	"jordan": true, "reynolds": true, "hamilton": true, "ford": true, "wallace": true,
+	"gibson": true, "spencer": true,
 	// Scandinavian
 	"andersson": true, "johansson": true, "karlsson": true, "nilsson": true,
 	"eriksson": true, "larsson": true, "olsson": true, "persson": true,
 	"svensson": true, "gustafsson": true, "pettersson": true, "jonsson": true,
+	"lindberg": true, "lindström": true, "lindgren": true, "berg": true,
+	"berglund": true, "ström": true,
 	// German
 	"mueller": true, "schmidt": true, "schneider": true, "fischer": true,
 	"weber": true, "meyer": true, "wagner": true, "becker": true, "schulz": true,
+	"müller": true, "hoffmann": true, "koch": true, "richter": true, "wolf": true,
+	"schröder": true,
 	// East Asian
 	"wang": true, "li": true, "zhang": true, "liu": true, "chen": true,
 	"yang": true, "huang": true, "zhao": true, "wu": true, "zhou": true,
 	"tanaka": true, "suzuki": true, "watanabe": true, "yamamoto": true, "nakamura": true,
 	"sato": true, "park": true, "choi": true, "jung": true, "kang": true,
+	"xu": true, "sun": true,
 }
 
 // NameStopwords contains words that should not be treated as names.

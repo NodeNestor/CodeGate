@@ -1,10 +1,12 @@
 package proxy
 
 import (
+	"codegate-proxy/internal/auth"
 	"codegate-proxy/internal/convert"
 	"codegate-proxy/internal/cooldown"
 	"codegate-proxy/internal/db"
 	"codegate-proxy/internal/guardrails"
+	"codegate-proxy/internal/limits"
 	"codegate-proxy/internal/models"
 	"codegate-proxy/internal/provider"
 	"codegate-proxy/internal/ratelimit"
@@ -116,6 +118,22 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		anthropicBody = guardrails.RunGuardrailsOnRequestBody(anthropicBody)
 	}
 
+	// 6.5 Clamp max_tokens to model limits
+	if model, ok := anthropicBody["model"].(string); ok {
+		if mt, ok := anthropicBody["max_tokens"].(float64); ok {
+			v := int(mt)
+			if clamped := limits.ClampMaxTokens(&v, model); clamped != nil {
+				anthropicBody["max_tokens"] = float64(*clamped)
+			}
+		}
+		if mct, ok := anthropicBody["max_completion_tokens"].(float64); ok {
+			v := int(mct)
+			if clamped := limits.ClampMaxTokens(&v, model); clamped != nil {
+				anthropicBody["max_completion_tokens"] = float64(*clamped)
+			}
+		}
+	}
+
 	// 7. Detect tier
 	tier := models.DetectTier(originalModel)
 
@@ -220,6 +238,13 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			action = "Failover"
 		}
 		log.Printf("[proxy] %s [%s] to %q (%s/%s) model=%s", action, inboundFormat, account.Name, account.Provider, account.AuthType, targetModel)
+
+		// OAuth token refresh before forwarding
+		if account.AuthType == "oauth" {
+			if err := auth.EnsureValidToken(&account); err != nil {
+				log.Printf("[proxy] Token refresh failed for %q: %v", account.Name, err)
+			}
+		}
 
 		// Forward to provider
 		provResp, err := provider.Forward(account, provider.ForwardOptions{
@@ -351,6 +376,29 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		responseBodyStr := string(responseBodyBytes)
+
+		// OAuth 401 retry: force sync and retry once
+		if provResp.Status == 401 && account.AuthType == "oauth" && !isFailover {
+			if updated := auth.ForceSyncFromFile(&account); updated != nil {
+				log.Printf("[proxy] Retrying with refreshed token for %q", account.Name)
+				provResp2, err2 := provider.Forward(*updated, provider.ForwardOptions{
+					Path:              forwardPath,
+					Method:            method,
+					Headers:           reqHeaders,
+					Body:              forwardBody,
+					APIKey:            updated.APIKey,
+					BaseURL:           updated.BaseURL,
+					AuthType:          updated.AuthType,
+					ExternalAccountID: updated.ExternalAccountID,
+				})
+				if err2 == nil {
+					responseBodyBytes, _ = io.ReadAll(provResp2.Body)
+					provResp2.Body.Close()
+					responseBodyStr = string(responseBodyBytes)
+					provResp = provResp2
+				}
+			}
+		}
 
 		// Convert response format if there's a mismatch
 		if provResp.Status >= 200 && provResp.Status < 300 {

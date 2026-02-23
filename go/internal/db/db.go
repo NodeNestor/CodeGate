@@ -3,6 +3,7 @@ package db
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -327,6 +328,28 @@ func getEncryptionKey() []byte {
 	return key
 }
 
+// encryptValue encrypts a value with AES-256-GCM.
+// Format: hex(iv):hex(ciphertext+tag)
+func encryptValue(value string, key []byte) string {
+	if key == nil || value == "" {
+		return ""
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return ""
+	}
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return ""
+	}
+	iv := make([]byte, aesGCM.NonceSize())
+	if _, err := rand.Read(iv); err != nil {
+		return ""
+	}
+	ciphertext := aesGCM.Seal(nil, iv, []byte(value), nil)
+	return hex.EncodeToString(iv) + ":" + hex.EncodeToString(ciphertext)
+}
+
 // decryptValue decrypts an AES-256-GCM encrypted value.
 // Format: hex(iv):hex(ciphertext+tag)
 func decryptValue(encrypted string, key []byte) string {
@@ -365,4 +388,91 @@ func decryptValue(encrypted string, key []byte) string {
 	}
 
 	return string(plaintext)
+}
+
+// UpdateAccountTokens updates an account's access/refresh tokens and expiry.
+func UpdateAccountTokens(id, accessToken, refreshToken string, expiresAt int64) {
+	encKey := getEncryptionKey()
+	encAccess := encryptValue(accessToken, encKey)
+	encRefresh := encryptValue(refreshToken, encKey)
+	writeExec(`UPDATE accounts SET api_key_enc = ?, refresh_token_enc = ?, token_expires_at = ?, status = 'active', updated_at = datetime('now') WHERE id = ?`,
+		encAccess, encRefresh, expiresAt, id)
+}
+
+// GetOAuthAccounts returns all enabled OAuth accounts with decrypted keys.
+func GetOAuthAccounts() ([]Account, error) {
+	rows, err := conn.Query(`SELECT id, name, provider, auth_type, api_key_enc, refresh_token_enc,
+		token_expires_at, base_url, priority, rate_limit, monthly_budget, enabled,
+		COALESCE(subscription_type, ''), COALESCE(account_email, ''),
+		COALESCE(external_account_id, ''), COALESCE(status, 'unknown'), COALESCE(error_count, 0)
+		FROM accounts WHERE auth_type = 'oauth' AND enabled = 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	encKey := getEncryptionKey()
+	var accounts []Account
+	for rows.Next() {
+		var a Account
+		var apiKeyEnc, refreshTokenEnc sql.NullString
+		var baseURL sql.NullString
+		var enabledInt int
+
+		err := rows.Scan(&a.ID, &a.Name, &a.Provider, &a.AuthType,
+			&apiKeyEnc, &refreshTokenEnc, &a.TokenExpiresAt,
+			&baseURL, &a.Priority, &a.RateLimit, &a.MonthlyBudget,
+			&enabledInt, &a.SubscriptionType, &a.AccountEmail,
+			&a.ExternalAccountID, &a.Status, &a.ErrorCount)
+		if err != nil {
+			return nil, fmt.Errorf("scan account: %w", err)
+		}
+		a.Enabled = enabledInt == 1
+		if baseURL.Valid {
+			a.BaseURL = baseURL.String
+		}
+		if apiKeyEnc.Valid && apiKeyEnc.String != "" {
+			a.APIKey = decryptValue(apiKeyEnc.String, encKey)
+		}
+		if refreshTokenEnc.Valid && refreshTokenEnc.String != "" {
+			a.RefreshToken = decryptValue(refreshTokenEnc.String, encKey)
+		}
+		accounts = append(accounts, a)
+	}
+	return accounts, rows.Err()
+}
+
+// GetAccount returns a single account by ID with decrypted keys.
+func GetAccount(id string) *Account {
+	row := conn.QueryRow(`SELECT id, name, provider, auth_type, api_key_enc, refresh_token_enc,
+		token_expires_at, base_url, priority, rate_limit, monthly_budget, enabled,
+		COALESCE(subscription_type, ''), COALESCE(account_email, ''),
+		COALESCE(external_account_id, ''), COALESCE(status, 'unknown'), COALESCE(error_count, 0)
+		FROM accounts WHERE id = ?`, id)
+
+	var a Account
+	var apiKeyEnc, refreshTokenEnc sql.NullString
+	var baseURL sql.NullString
+	var enabledInt int
+
+	err := row.Scan(&a.ID, &a.Name, &a.Provider, &a.AuthType,
+		&apiKeyEnc, &refreshTokenEnc, &a.TokenExpiresAt,
+		&baseURL, &a.Priority, &a.RateLimit, &a.MonthlyBudget,
+		&enabledInt, &a.SubscriptionType, &a.AccountEmail,
+		&a.ExternalAccountID, &a.Status, &a.ErrorCount)
+	if err != nil {
+		return nil
+	}
+	a.Enabled = enabledInt == 1
+	if baseURL.Valid {
+		a.BaseURL = baseURL.String
+	}
+	encKey := getEncryptionKey()
+	if apiKeyEnc.Valid && apiKeyEnc.String != "" {
+		a.APIKey = decryptValue(apiKeyEnc.String, encKey)
+	}
+	if refreshTokenEnc.Valid && refreshTokenEnc.String != "" {
+		a.RefreshToken = decryptValue(refreshTokenEnc.String, encKey)
+	}
+	return &a
 }
