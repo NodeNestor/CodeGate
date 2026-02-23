@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
+import Toggle from "../components/ui/Toggle";
 import {
   getPrivacyStatus,
   updatePrivacySettings,
@@ -253,19 +254,7 @@ export default function Guardrails() {
               </p>
             </div>
           </div>
-          <button
-            onClick={toggleEnabled}
-            disabled={updating}
-            className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-gray-950 ${
-              isEnabled ? "bg-green-600" : "bg-gray-700"
-            }`}
-          >
-            <span
-              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-lg transition-transform ${
-                isEnabled ? "translate-x-8" : "translate-x-1"
-              }`}
-            />
-          </button>
+          <Toggle checked={isEnabled} onChange={() => toggleEnabled()} disabled={updating} />
         </div>
       </Card>
 
@@ -339,22 +328,7 @@ export default function Guardrails() {
                       <div className={`p-2 rounded-lg ${bgColor}`}>
                         <IconComp className={`h-5 w-5 ${textColor}`} />
                       </div>
-                      <button
-                        onClick={() => toggleGuardrail(g.id)}
-                        disabled={updating}
-                        className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
-                          g.enabled ? "bg-green-600" : "bg-gray-700"
-                        }`}
-                      >
-                        <span
-                          className="inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform"
-                          style={{
-                            transform: g.enabled
-                              ? "translateX(22px)"
-                              : "translateX(2px)",
-                          }}
-                        />
-                      </button>
+                      <Toggle checked={g.enabled} onChange={() => toggleGuardrail(g.id)} disabled={updating} />
                     </div>
                     <h3 className="text-sm font-semibold text-gray-200 mb-1">
                       {g.name}

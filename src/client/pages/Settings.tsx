@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from "react";
+import { Copy, Check, Loader2 } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
 import Toggle from "../components/ui/Toggle";
+import { Input, Select } from "../components/ui/Input";
 import {
   getSettings,
   updateSettings,
@@ -12,6 +14,7 @@ import {
   getEncryptionInfo,
   rotateAccountKey,
   rotateGuardrailKey,
+  getTenants,
   type ModelLimitsInfo,
   type EncryptionInfo,
 } from "../lib/api";
@@ -41,10 +44,20 @@ export default function Settings() {
   const [rotatingGuardrail, setRotatingGuardrail] = useState(false);
   const [rotateMsg, setRotateMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
+  // Editable ports
+  const [editProxyPort, setEditProxyPort] = useState("");
+  const [editUiPort, setEditUiPort] = useState("");
+  const [portSaving, setPortSaving] = useState(false);
+  const [portMsg, setPortMsg] = useState("");
+
+  // Tenant count
+  const [tenantCount, setTenantCount] = useState<number | null>(null);
+
   useEffect(() => {
     loadSettings();
     loadModelLimits();
     loadEncryptionInfo();
+    loadTenantCount();
   }, []);
 
   async function loadSettings() {
@@ -69,6 +82,15 @@ export default function Settings() {
   async function loadEncryptionInfo() {
     try {
       setEncryptionInfo(await getEncryptionInfo());
+    } catch {
+      // ignore
+    }
+  }
+
+  async function loadTenantCount() {
+    try {
+      const t = await getTenants();
+      setTenantCount(t.length);
     } catch {
       // ignore
     }
@@ -127,6 +149,33 @@ export default function Settings() {
     }
   }
 
+  useEffect(() => {
+    if (settings.proxy_port) setEditProxyPort(settings.proxy_port);
+    else setEditProxyPort("9112");
+    if (settings.ui_port) setEditUiPort(settings.ui_port);
+    else setEditUiPort("9111");
+  }, [settings]);
+
+  async function handleSavePorts() {
+    setPortSaving(true);
+    setPortMsg("");
+    try {
+      const updates: Record<string, string> = {};
+      if (editProxyPort !== proxyPort) updates.proxy_port = editProxyPort;
+      if (editUiPort !== uiPort) updates.ui_port = editUiPort;
+      if (Object.keys(updates).length > 0) {
+        await updateSettings(updates);
+        setSettings((prev) => ({ ...prev, ...updates }));
+        setPortMsg("Port change takes effect after server restart");
+        setTimeout(() => setPortMsg(""), 5000);
+      }
+    } catch (err: any) {
+      setPortMsg(err.message || "Failed to save ports");
+    } finally {
+      setPortSaving(false);
+    }
+  }
+
   async function handleToggle(key: string, value: boolean) {
     await handleSave({ [key]: value ? "true" : "false" });
   }
@@ -177,25 +226,7 @@ export default function Settings() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <svg
-          className="h-8 w-8 animate-spin text-brand-500"
-          fill="none"
-          viewBox="0 0 24 24"
-        >
-          <circle
-            className="opacity-25"
-            cx="12"
-            cy="12"
-            r="10"
-            stroke="currentColor"
-            strokeWidth="4"
-          />
-          <path
-            className="opacity-75"
-            fill="currentColor"
-            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-          />
-        </svg>
+        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
       </div>
     );
   }
@@ -245,9 +276,12 @@ export default function Settings() {
                 The port the proxy server listens on for API requests
               </p>
             </div>
-            <code className="text-sm font-mono text-gray-300 bg-gray-800 px-3 py-1.5 rounded-lg">
-              {proxyPort}
-            </code>
+            <input
+              type="number"
+              value={editProxyPort}
+              onChange={(e) => setEditProxyPort(e.target.value)}
+              className="w-24 text-sm font-mono text-gray-300 bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-700 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
+            />
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex items-center justify-between py-2">
@@ -257,9 +291,12 @@ export default function Settings() {
                 The port the web dashboard is served on
               </p>
             </div>
-            <code className="text-sm font-mono text-gray-300 bg-gray-800 px-3 py-1.5 rounded-lg">
-              {uiPort}
-            </code>
+            <input
+              type="number"
+              value={editUiPort}
+              onChange={(e) => setEditUiPort(e.target.value)}
+              className="w-24 text-sm font-mono text-gray-300 bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-700 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
+            />
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex items-center justify-between py-2">
@@ -273,6 +310,21 @@ export default function Settings() {
               http://localhost:{proxyPort}
             </code>
           </div>
+          {(editProxyPort !== proxyPort || editUiPort !== uiPort) && (
+            <>
+              <div className="border-t border-gray-800" />
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  {portMsg && (
+                    <p className="text-sm text-yellow-400">{portMsg}</p>
+                  )}
+                </div>
+                <Button size="sm" onClick={handleSavePorts} loading={portSaving}>
+                  Save Ports
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </Card>
 
@@ -287,36 +339,12 @@ export default function Settings() {
               <Button size="sm" variant="ghost" onClick={handleCopyApiKey}>
                 {copiedKey ? (
                   <>
-                    <svg
-                      className="h-4 w-4 text-green-400"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M4.5 12.75l6 6 9-13.5"
-                      />
-                    </svg>
+                    <Check className="h-4 w-4 text-green-400" />
                     <span className="text-xs text-green-400">Copied</span>
                   </>
                 ) : (
                   <>
-                    <svg
-                      className="h-4 w-4"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
-                      />
-                    </svg>
+                    <Copy className="h-4 w-4" />
                     <span className="text-xs">Copy</span>
                   </>
                 )}
@@ -484,56 +512,46 @@ export default function Settings() {
             </p>
             <div className="flex items-end gap-3 flex-wrap">
               <div className="flex-1 min-w-[200px]">
-                <label className="block text-xs text-gray-400 mb-1">
-                  Model ID (prefix match)
-                </label>
-                <input
+                <Input
+                  label="Model ID (prefix match)"
                   type="text"
                   placeholder="e.g. deepseek-chat"
                   value={newModelId}
                   onChange={(e) => setNewModelId(e.target.value)}
-                  className="block w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
                 />
               </div>
               <div className="w-32">
-                <label className="block text-xs text-gray-400 mb-1">
-                  Max Output Tokens
-                </label>
-                <input
+                <Input
+                  label="Max Output Tokens"
                   type="number"
                   placeholder="e.g. 8192"
                   value={newMaxTokens}
                   onChange={(e) => setNewMaxTokens(e.target.value)}
-                  className="block w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
                 />
               </div>
               <div className="w-28">
-                <label className="block text-xs text-gray-400 mb-1">
-                  Tools
-                </label>
-                <select
+                <Select
+                  label="Tools"
                   value={newToolCalling}
                   onChange={(e) => setNewToolCalling(e.target.value)}
-                  className="block w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
-                >
-                  <option value="unset">-</option>
-                  <option value="true">Yes</option>
-                  <option value="false">No</option>
-                </select>
+                  options={[
+                    { value: "unset", label: "-" },
+                    { value: "true", label: "Yes" },
+                    { value: "false", label: "No" },
+                  ]}
+                />
               </div>
               <div className="w-28">
-                <label className="block text-xs text-gray-400 mb-1">
-                  Reasoning
-                </label>
-                <select
+                <Select
+                  label="Reasoning"
                   value={newReasoning}
                   onChange={(e) => setNewReasoning(e.target.value)}
-                  className="block w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
-                >
-                  <option value="unset">-</option>
-                  <option value="true">Yes</option>
-                  <option value="false">No</option>
-                </select>
+                  options={[
+                    { value: "unset", label: "-" },
+                    { value: "true", label: "Yes" },
+                    { value: "false", label: "No" },
+                  ]}
+                />
               </div>
               <Button
                 size="sm"
@@ -630,6 +648,24 @@ export default function Settings() {
               disabled={saving}
             />
           </div>
+        </div>
+      </Card>
+
+      {/* Multi-Tenancy */}
+      <Card title="Multi-Tenancy" subtitle="Manage external API access with tenant keys">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-gray-300">
+              {tenantCount !== null
+                ? `${tenantCount} tenant${tenantCount !== 1 ? "s" : ""} configured`
+                : "Loading..."}
+            </p>
+          </div>
+          <a href="/tenants">
+            <Button variant="secondary" size="sm">
+              Manage Tenants
+            </Button>
+          </a>
         </div>
       </Card>
     </div>

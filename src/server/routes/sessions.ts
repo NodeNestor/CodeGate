@@ -7,7 +7,7 @@ import {
   importCredentials,
   listSessions,
 } from "../session-manager.js";
-import { createAccount, updateSession as dbUpdateSession } from "../db.js";
+import { createAccount, updateSession as dbUpdateSession, getAccounts, getConfigs, createConfig, setConfigTiers, activateConfig } from "../db.js";
 
 const sessions = new Hono();
 
@@ -91,6 +91,30 @@ sessions.post("/:id/import-credentials", async (c) => {
     // Link this session to the newly created account for persistent token refresh
     dbUpdateSession(id, { account_id: account.id });
 
+    // Auto-create default config when this is the first account and no configs exist
+    let configCreated = false;
+    try {
+      const allAccounts = getAccounts();
+      const allConfigs = getConfigs();
+      if (allAccounts.length === 1 && allConfigs.length === 0) {
+        const config = createConfig({
+          name: "Default",
+          description: `Auto-created for ${creds.provider}`,
+          is_active: 0,
+          routing_strategy: "priority",
+        });
+        setConfigTiers(config.id, [
+          { tier: "opus", account_id: account.id, priority: 100 },
+          { tier: "sonnet", account_id: account.id, priority: 100 },
+          { tier: "haiku", account_id: account.id, priority: 100 },
+        ]);
+        activateConfig(config.id);
+        configCreated = true;
+      }
+    } catch (err) {
+      console.error("Auto-config creation failed:", err);
+    }
+
     return c.json(
       {
         success: true,
@@ -99,6 +123,7 @@ sessions.post("/:id/import-credentials", async (c) => {
         expiresAt: creds.expiresAt
           ? new Date(creds.expiresAt).toISOString()
           : null,
+        configCreated,
       },
       201
     );
