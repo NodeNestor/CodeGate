@@ -26,8 +26,8 @@ const docker = new Docker({
   socketPath: process.env.DOCKER_SOCKET || "/var/run/docker.sock",
 });
 
-const SESSION_IMAGE = process.env.SESSION_IMAGE || "code-proxy-session";
-const SESSION_NETWORK = process.env.SESSION_NETWORK || "code-proxy_proxy-net";
+const SESSION_IMAGE = process.env.SESSION_IMAGE || "codegate-session";
+const SESSION_NETWORK = process.env.SESSION_NETWORK || "codegate_proxy-net";
 const BASE_PORT = parseInt(process.env.SESSION_BASE_PORT || "7700", 10);
 const CREDENTIAL_SYNC_INTERVAL = 10 * 60 * 1000; // 10 minutes
 

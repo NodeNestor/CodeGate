@@ -74,7 +74,7 @@ setup.get("/", (c) => {
       name: "Continue.dev",
       description: "Open-source AI code assistant for VS Code & JetBrains",
       autoSetup: false,
-      snippet: `// ~/.continue/config.yaml - add a model:\nmodels:\n  - title: "Claude via CodeProxy"\n    provider: openai\n    model: claude-sonnet-4-20250514\n    apiBase: ${proxyUrl}/v1\n    apiKey: ${proxyKey}`,
+      snippet: `// ~/.continue/config.yaml - add a model:\nmodels:\n  - title: "Claude via CodeGate"\n    provider: openai\n    model: claude-sonnet-4-20250514\n    apiBase: ${proxyUrl}/v1\n    apiKey: ${proxyKey}`,
       docs: "https://continue.dev",
     },
     generic: {

@@ -153,7 +153,7 @@ export default function AccountForm({
   }
 
   async function handleRefreshFromHost() {
-    // Host refresh not available in CodeProxy - use terminal sessions instead
+    // Host refresh not available in CodeGate - use terminal sessions instead
     setRefreshResult({ success: false, message: "Use terminal sessions to refresh OAuth credentials" });
   }
 

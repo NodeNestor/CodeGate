@@ -87,7 +87,7 @@ export default function Setup() {
       <div>
         <h1 className="text-2xl font-bold text-gray-100">Setup</h1>
         <p className="text-sm text-gray-400 mt-1">
-          Configure your AI coding tools to use CodeProxy
+          Configure your AI coding tools to use CodeGate
         </p>
       </div>
 
