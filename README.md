@@ -136,7 +136,7 @@ Full management UI on port 9211:
 ```bash
 git clone https://github.com/NodeNestor/codegate.git
 cd codegate
-docker compose up -d
+docker compose up -d --build
 ```
 
 Dashboard at `http://localhost:9211`, proxy at `http://localhost:9212`.
@@ -278,3 +278,9 @@ npx tsc --noEmit
 ## License
 
 [MIT](LICENSE)
+
+---
+
+## Author
+
+Built by [NodeNestor](https://github.com/NodeNestor).
