@@ -89,7 +89,7 @@ export default function App() {
               <path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
             </svg>
           </div>
-          <span className="text-lg font-bold text-gray-100">CodeProxy</span>
+          <span className="text-lg font-bold text-gray-100">CodeGate</span>
         </div>
 
         {/* Navigation */}
@@ -115,7 +115,7 @@ export default function App() {
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-800">
-          <p className="text-xs text-gray-600">CodeProxy v1.0.0</p>
+          <p className="text-xs text-gray-600">CodeGate v1.0.0</p>
         </div>
       </aside>
 

@@ -1,7 +1,41 @@
 {
-  "name": "code-proxy",
+  "name": "codegate",
   "version": "1.0.0",
+  "description": "Universal LLM proxy for coding agents. Route Claude Code, Copilot, Cursor and more through multiple providers with automatic failover, format conversion, and built-in privacy guardrails.",
   "type": "module",
+  "license": "MIT",
+  "author": "NodeNestor",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NodeNestor/codegate.git"
+  },
+  "homepage": "https://github.com/NodeNestor/codegate",
+  "bugs": {
+    "url": "https://github.com/NodeNestor/codegate/issues"
+  },
+  "keywords": [
+    "llm",
+    "proxy",
+    "claude",
+    "openai",
+    "anthropic",
+    "coding-agent",
+    "ai-proxy",
+    "api-gateway",
+    "failover",
+    "guardrails",
+    "privacy",
+    "format-conversion"
+  ],
+  "bin": {
+    "codegate": "./bin/codegate.js"
+  },
+  "files": [
+    "dist/",
+    "bin/",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "dev": "concurrently \"tsx watch src/server/index.ts\" \"vite\"",
     "dev:server": "tsx watch src/server/index.ts",
@@ -41,5 +75,8 @@
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
     "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -86,9 +86,9 @@ ui.get("*", (c) => {
   }
   return c.html(`<!DOCTYPE html>
 <html>
-<head><title>CodeProxy</title></head>
+<head><title>CodeGate</title></head>
 <body>
-  <h1>CodeProxy</h1>
+  <h1>CodeGate</h1>
   <p>UI build not found. Run <code>npm run build</code> or use <code>npm run dev</code> for development.</p>
 </body>
 </html>`);
@@ -105,7 +105,7 @@ proxy.route("/", proxyRouter);
 
 // ─── Start servers ──────────────────────────────────────────────────────────
 
-console.log(`Starting CodeProxy...`);
+console.log(`Starting CodeGate...`);
 console.log(`  UI:    http://localhost:${UI_PORT}`);
 console.log(`  Proxy: http://localhost:${PROXY_PORT}`);
 
@@ -130,4 +130,4 @@ startTokenRefreshLoop();
 // Start automatic log retention cleanup (deletes logs older than 30 days, runs every 6 hours)
 startLogRetentionCleanup();
 
-console.log(`CodeProxy is running.`);
+console.log(`CodeGate is running.`);
