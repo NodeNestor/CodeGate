@@ -188,10 +188,10 @@ export async function getSessions(): Promise<Session[]> {
   return request<Session[]>("/sessions");
 }
 
-export async function createSession(name: string): Promise<Session> {
+export async function createSession(name: string, autoCommand?: string): Promise<Session> {
   return request<Session>("/sessions", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, autoCommand }),
   });
 }
 
@@ -204,11 +204,25 @@ export async function deleteSession(id: string): Promise<void> {
 }
 
 export async function importCredentials(
-  sessionId: string
-): Promise<{ success: boolean; account?: any; error?: string }> {
+  sessionId: string,
+  name?: string
+): Promise<{ success: boolean; accountId?: string; accountName?: string; configCreated?: boolean; error?: string }> {
   return request(`/sessions/${sessionId}/import-credentials`, {
     method: "POST",
+    body: JSON.stringify(name ? { name } : {}),
   });
+}
+
+export async function checkSessionCredentials(
+  sessionId: string
+): Promise<{ found: boolean; provider?: string }> {
+  return request(`/sessions/${sessionId}/check-credentials`);
+}
+
+export async function getSessionAuthUrls(
+  sessionId: string
+): Promise<{ urls: string[] }> {
+  return request(`/sessions/${sessionId}/auth-urls`);
 }
 
 // ── Setup ──────────────────────────────────────────────────────────────────
@@ -218,11 +232,12 @@ export async function getSetupSnippets(): Promise<Record<string, SetupSnippet>> 
 }
 
 export async function autoSetup(
-  tool: string
+  tool: string,
+  apiKey?: string
 ): Promise<{ success: boolean; message: string }> {
   return request(`/setup/auto`, {
     method: "POST",
-    body: JSON.stringify({ tool }),
+    body: JSON.stringify({ tool, apiKey }),
   });
 }
 
@@ -483,6 +498,7 @@ export interface Tenant {
   id: string;
   name: string;
   api_key_prefix: string;
+  api_key_raw?: string | null;
   config_id: string | null;
   rate_limit: number;
   enabled: number;
@@ -553,4 +569,8 @@ export async function deleteTenantSetting(id: string, key: string): Promise<void
 
 export async function rotateTenantKey(id: string): Promise<TenantCreateResponse> {
   return request<TenantCreateResponse>(`/tenants/${id}/rotate-key`, { method: "POST" });
+}
+
+export async function regenerateProxyKey(): Promise<{ key: string }> {
+  return request<{ key: string }>("/settings/regenerate-proxy-key", { method: "POST" });
 }
