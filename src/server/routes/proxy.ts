@@ -31,6 +31,9 @@ import {
   updateAccountStatus,
   getSetting,
   insertRequestLog,
+  getTenantByKeyHash,
+  hashApiKey,
+  hasTenants,
   type AccountDecrypted,
 } from "../db.js";
 import {
@@ -72,8 +75,6 @@ const proxy = new Hono();
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-const PROXY_API_KEY = process.env.PROXY_API_KEY || "";
-
 type InboundFormat = "anthropic" | "openai";
 
 // ─── Health check ───────────────────────────────────────────────────────────
@@ -88,16 +89,44 @@ proxy.get("/health", (c) => {
 
 // ─── Auth middleware ────────────────────────────────────────────────────────
 
-function validateApiKey(c: any): boolean {
-  if (!PROXY_API_KEY) return true;
+function validateApiKey(c: any): { valid: boolean; tenantId?: string } {
+  const envKey = process.env.PROXY_API_KEY;
 
+  // Extract key from headers
   const xApiKey = c.req.header("x-api-key");
   const authHeader = c.req.header("authorization");
-  const bearerMatch = authHeader?.startsWith("Bearer ")
-    ? authHeader.slice(7)
-    : null;
+  const key = xApiKey || (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null);
 
-  return xApiKey === PROXY_API_KEY || bearerMatch === PROXY_API_KEY;
+  // 1. Legacy: PROXY_API_KEY env var (backwards compat)
+  if (envKey) {
+    return { valid: key === envKey };
+  }
+
+  // 2. Simple mode: match against stored proxy_api_key
+  if (getSetting("multi_tenancy") !== "true") {
+    const storedKey = getSetting("proxy_api_key");
+    if (!storedKey) return { valid: true }; // no key configured → open
+    return { valid: key === storedKey };
+  }
+
+  // 3. No tenants at all → open mode (pre-first-boot edge case)
+  if (!hasTenants()) {
+    return { valid: true };
+  }
+
+  // 4. No key provided → reject
+  if (!key) {
+    return { valid: false };
+  }
+
+  // 5. Tenant key lookup via hash
+  const hash = hashApiKey(key);
+  const tenant = getTenantByKeyHash(hash);
+  if (tenant) {
+    return { valid: true, tenantId: tenant.id };
+  }
+
+  return { valid: false };
 }
 
 // ─── OpenAI Models endpoint ─────────────────────────────────────────────────
@@ -135,7 +164,8 @@ proxy.all("/v1/*", async (c) => {
   }
 
   // 1. Validate proxy API key
-  if (!validateApiKey(c)) {
+  const { valid } = validateApiKey(c);
+  if (!valid) {
     return c.json(
       {
         type: "error",
