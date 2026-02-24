@@ -28,6 +28,7 @@ import {
   updateTenantSettings,
   deleteTenantSetting,
   getConfigs,
+  getSettings,
   type Tenant,
   type Config,
 } from "../lib/api";
@@ -56,8 +57,8 @@ export default function Tenants() {
   // API key display modal
   const [keyModalOpen, setKeyModalOpen] = useState(false);
   const [displayKey, setDisplayKey] = useState("");
-  const [keyWarning, setKeyWarning] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copiedCardKey, setCopiedCardKey] = useState<string | null>(null);
 
   // Delete confirmation
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -76,15 +77,19 @@ export default function Tenants() {
   const [newSettingValue, setNewSettingValue] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
 
+  // Default tenant tracking
+  const [defaultTenantId, setDefaultTenantId] = useState<string | null>(null);
+
   // Error state
   const [error, setError] = useState("");
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [t, c] = await Promise.all([getTenants(), getConfigs()]);
+      const [t, c, s] = await Promise.all([getTenants(), getConfigs(), getSettings()]);
       setTenants(t);
       setConfigs(c);
+      setDefaultTenantId(s.default_tenant_id || null);
     } catch (err: any) {
       console.error("Failed to load tenants:", err);
       setError(err.message || "Failed to load tenants");
@@ -123,7 +128,6 @@ export default function Tenants() {
       });
       setCreateOpen(false);
       setDisplayKey(result.api_key);
-      setKeyWarning(result.warning);
       setKeyModalOpen(true);
       await loadData();
     } catch (err: any) {
@@ -196,7 +200,6 @@ export default function Tenants() {
     try {
       const result = await rotateTenantKey(tenant.id);
       setDisplayKey(result.api_key);
-      setKeyWarning(result.warning);
       setKeyModalOpen(true);
       await loadData();
     } catch (err: any) {
@@ -376,6 +379,9 @@ export default function Tenants() {
                     <h3 className="text-base font-semibold text-gray-100 truncate">
                       {tenant.name}
                     </h3>
+                    {defaultTenantId === tenant.id && (
+                      <Badge variant="info">Default</Badge>
+                    )}
                     <Badge
                       variant={tenant.enabled === 1 ? "success" : "default"}
                     >
@@ -390,7 +396,30 @@ export default function Tenants() {
                 <div className="flex items-center gap-2 text-sm">
                   <Key className="h-3.5 w-3.5 text-gray-500 shrink-0" />
                   <span className="text-gray-400">Key:</span>
-                  <Badge variant="info">{tenant.api_key_prefix}...</Badge>
+                  {(tenant as any).api_key_raw ? (
+                    <>
+                      <code className="text-xs font-mono text-gray-300 bg-gray-800 px-1.5 py-0.5 rounded truncate max-w-[180px]">
+                        {(tenant as any).api_key_raw}
+                      </code>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText((tenant as any).api_key_raw);
+                          setCopiedCardKey(tenant.id);
+                          setTimeout(() => setCopiedCardKey(null), 2000);
+                        }}
+                        className="text-gray-500 hover:text-gray-300 shrink-0"
+                        title="Copy key"
+                      >
+                        {copiedCardKey === tenant.id ? (
+                          <Check className="h-3.5 w-3.5 text-green-400" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </>
+                  ) : (
+                    <Badge variant="info">{tenant.api_key_prefix}...</Badge>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2 text-sm">
@@ -559,7 +588,6 @@ export default function Tenants() {
         onClose={() => {
           setKeyModalOpen(false);
           setDisplayKey("");
-          setKeyWarning("");
           setCopied(false);
         }}
         title="API Key"
@@ -569,7 +597,6 @@ export default function Tenants() {
             onClick={() => {
               setKeyModalOpen(false);
               setDisplayKey("");
-              setKeyWarning("");
               setCopied(false);
             }}
           >
@@ -578,13 +605,9 @@ export default function Tenants() {
         }
       >
         <div className="space-y-4">
-          <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 p-3 text-sm text-yellow-400 flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-            <span>
-              {keyWarning ||
-                "This API key will only be shown once. Copy it now and store it securely."}
-            </span>
-          </div>
+          <p className="text-sm text-gray-400">
+            You can view this key anytime from the tenant card or the Setup page.
+          </p>
 
           <div className="relative">
             <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 font-mono text-sm text-gray-100 break-all select-all">
@@ -642,6 +665,14 @@ export default function Tenants() {
             This will revoke the tenant's API key and remove all associated
             settings. This action cannot be undone.
           </p>
+          {deletingTenant && defaultTenantId === deletingTenant.id && (
+            <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 p-3 text-sm text-yellow-400 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>
+                This is the default proxy API key. Deleting it will require all your AI tools to be reconfigured with a new key.
+              </span>
+            </div>
+          )}
         </div>
       </Modal>
 

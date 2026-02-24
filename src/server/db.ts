@@ -325,6 +325,11 @@ export function initDB(): Database.Database {
   const sessionColNames = new Set(sessionCols.map((c) => c.name));
   if (!sessionColNames.has("account_id")) db.exec("ALTER TABLE sessions ADD COLUMN account_id TEXT");
 
+  // Tenant table migrations
+  const tenantCols = db.prepare("PRAGMA table_info(tenants)").all() as Array<{ name: string }>;
+  const tenantColNames = new Set(tenantCols.map((c) => c.name));
+  if (!tenantColNames.has("api_key_raw")) db.exec("ALTER TABLE tenants ADD COLUMN api_key_raw TEXT");
+
   // Tenant column migrations for usage and request_logs
   const usageCols = db.prepare("PRAGMA table_info(usage)").all() as Array<{ name: string }>;
   const usageColNames = new Set(usageCols.map((c) => c.name));
@@ -932,7 +937,7 @@ export function getRequestLogCount(): number {
 
 // ─── Tenant CRUD ─────────────────────────────────────────────────────────────
 
-function hashApiKey(rawKey: string): string {
+export function hashApiKey(rawKey: string): string {
   return crypto.createHash("sha256").update(rawKey).digest("hex");
 }
 
@@ -952,9 +957,9 @@ export function createTenant(data: {
   const prefix = rawKey.substring(0, 8);
 
   d.prepare(
-    `INSERT INTO tenants (id, name, api_key_hash, api_key_prefix, config_id, rate_limit)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(id, data.name, keyHash, prefix, data.config_id ?? null, data.rate_limit ?? 0);
+    `INSERT INTO tenants (id, name, api_key_hash, api_key_prefix, api_key_raw, config_id, rate_limit)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, data.name, keyHash, prefix, rawKey, data.config_id ?? null, data.rate_limit ?? 0);
 
   const tenant = d.prepare("SELECT * FROM tenants WHERE id = ?").get(id) as Tenant;
   return { tenant, raw_api_key: rawKey };
@@ -962,14 +967,14 @@ export function createTenant(data: {
 
 export function getTenants(): Omit<Tenant, "api_key_hash">[] {
   return getDB().prepare(
-    "SELECT id, name, api_key_prefix, config_id, rate_limit, enabled, created_at, updated_at FROM tenants ORDER BY name ASC"
+    "SELECT id, name, api_key_prefix, api_key_raw, config_id, rate_limit, enabled, created_at, updated_at FROM tenants ORDER BY name ASC"
   ).all() as Omit<Tenant, "api_key_hash">[];
 }
 
 export function getTenant(id: string): TenantWithSettings | undefined {
   const d = getDB();
   const tenant = d.prepare(
-    "SELECT id, name, api_key_prefix, config_id, rate_limit, enabled, created_at, updated_at FROM tenants WHERE id = ?"
+    "SELECT id, name, api_key_prefix, api_key_raw, config_id, rate_limit, enabled, created_at, updated_at FROM tenants WHERE id = ?"
   ).get(id) as Omit<Tenant, "api_key_hash"> | undefined;
   if (!tenant) return undefined;
   const settings = getTenantSettings(id);
@@ -1014,7 +1019,7 @@ export function rotateTenantKey(id: string): { tenant: Tenant; raw_api_key: stri
   const keyHash = hashApiKey(rawKey);
   const prefix = rawKey.substring(0, 8);
 
-  d.prepare("UPDATE tenants SET api_key_hash = ?, api_key_prefix = ?, updated_at = datetime('now') WHERE id = ?").run(keyHash, prefix, id);
+  d.prepare("UPDATE tenants SET api_key_hash = ?, api_key_prefix = ?, api_key_raw = ?, updated_at = datetime('now') WHERE id = ?").run(keyHash, prefix, rawKey, id);
   const tenant = d.prepare("SELECT * FROM tenants WHERE id = ?").get(id) as Tenant;
   return { tenant, raw_api_key: rawKey };
 }

@@ -40,7 +40,6 @@ router.post("/", async (c) => {
     return c.json({
       tenant: result.tenant,
       api_key: result.raw_api_key,
-      warning: "Store this API key securely. It will not be shown again.",
     }, 201);
   } catch (err: any) {
     if (err.message?.includes("UNIQUE constraint")) {
@@ -135,7 +134,6 @@ router.post("/:id/rotate-key", (c) => {
     return c.json({
       tenant: result.tenant,
       api_key: result.raw_api_key,
-      warning: "Store this API key securely. It will not be shown again.",
     });
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
