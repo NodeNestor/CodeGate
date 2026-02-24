@@ -18,10 +18,11 @@ setup.get("/", (c) => {
   const proxyUrl = getProxyUrl();
 
   // Tenant info for the frontend selector
-  const tenants = getTenants().map((t) => ({
+  const tenants = getTenants().map((t: any) => ({
     id: t.id,
     name: t.name,
     api_key_prefix: t.api_key_prefix,
+    api_key: t.api_key_raw || null,
   }));
   const defaultTenantId = getSetting("default_tenant_id") || null;
   const defaultTenantKey = getSetting("proxy_api_key") || "";

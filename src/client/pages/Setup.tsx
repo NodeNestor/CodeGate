@@ -9,6 +9,7 @@ interface TenantInfo {
   id: string;
   name: string;
   api_key_prefix: string;
+  api_key: string | null;
 }
 
 interface ToolInfo {
@@ -60,12 +61,11 @@ export default function Setup() {
   // Resolve the active API key based on mode
   function getActiveKey(): string {
     if (!data) return "";
-    // Multi-tenancy ON → use tenant key regardless of env var
+    // Multi-tenancy ON → use selected tenant's key
     if (data.multiTenancy) {
       if (!selectedTenantId) return customKey || "";
-      if (selectedTenantId === data.defaultTenantId && data.defaultTenantKey) {
-        return data.defaultTenantKey;
-      }
+      const tenant = data.tenants.find((t) => t.id === selectedTenantId);
+      if (tenant?.api_key) return tenant.api_key;
       return customKey || "";
     }
     // Simple mode: env var takes precedence, then stored key
@@ -127,7 +127,8 @@ export default function Setup() {
   const multiTenancy = data.multiTenancy;
   const selectedTenant = data.tenants.find((t) => t.id === selectedTenantId);
   const isDefaultTenant = selectedTenantId === data.defaultTenantId;
-  const needsCustomKey = multiTenancy && selectedTenantId && !isDefaultTenant && !customKey;
+  const selectedTenantKey = selectedTenant?.api_key || null;
+  const needsCustomKey = multiTenancy && selectedTenantId && !selectedTenantKey && !customKey;
   const toolEntries = Object.entries(data.tools);
 
   return (
@@ -213,16 +214,16 @@ export default function Setup() {
                   <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500 pointer-events-none" />
                 </div>
 
-                {/* Default tenant: show key */}
-                {isDefaultTenant && data.defaultTenantKey ? (
+                {/* Show tenant key */}
+                {selectedTenantKey ? (
                   <div className="flex items-center gap-2">
                     <code className="text-sm font-mono text-gray-300 bg-gray-800 px-3 py-1.5 rounded-lg break-all">
-                      {data.defaultTenantKey}
+                      {selectedTenantKey}
                     </code>
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => handleCopy(data.defaultTenantKey, "tenant-key")}
+                      onClick={() => handleCopy(selectedTenantKey, "tenant-key")}
                     >
                       {copiedIdx === "tenant-key" ? (
                         <Check className="h-4 w-4 text-green-400" />
@@ -232,7 +233,7 @@ export default function Setup() {
                     </Button>
                   </div>
                 ) : (
-                  /* Non-default tenant: paste key */
+                  /* Key not stored (legacy tenant) — paste manually */
                   <div className="flex-1 min-w-[280px]">
                     <div className="flex items-center gap-2 mb-1.5">
                       <Badge variant="info">{selectedTenant?.api_key_prefix}...</Badge>
