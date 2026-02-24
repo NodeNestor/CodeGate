@@ -40,6 +40,10 @@ if (!getSetting("detailed_request_logging")) {
   setSetting("detailed_request_logging", "false");
 }
 
+if (!getSetting("finetune_logging")) {
+  setSetting("finetune_logging", "false");
+}
+
 // Default multi_tenancy to false if not set
 if (!getSetting("multi_tenancy")) {
   setSetting("multi_tenancy", "false");

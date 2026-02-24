@@ -71,6 +71,17 @@ import {
   createDeanonymizeStream,
 } from "../guardrails/manager.js";
 
+import {
+  isFinetuneEnabled,
+  extractMessagesFromRequest,
+  extractTextFromAnthropicSSE,
+  extractTextFromOpenAISSE,
+  extractTextFromResponse,
+  deriveConversationId,
+  deriveTurnIndex,
+  writeFinetuneEntry,
+} from "../finetune.js";
+
 const proxy = new Hono();
 
 // ─── Configuration ──────────────────────────────────────────────────────────
@@ -486,6 +497,27 @@ proxy.all("/v1/*", async (c) => {
           responseStream = createDeanonymizeStream(responseStream);
         }
 
+        // Fine-tune capture (streaming) — tee the stream before sending to client
+        let finetuneCapture: Promise<string> | null = null;
+        if (isFinetuneEnabled() && providerResponse.status < 300) {
+          const [clientStream, captureStream] = responseStream.tee();
+          responseStream = clientStream;
+
+          finetuneCapture = (async () => {
+            const decoder = new TextDecoder();
+            const reader = captureStream.getReader();
+            const chunks: string[] = [];
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(decoder.decode(value, { stream: true }));
+              }
+            } catch {} finally { reader.releaseLock(); }
+            return chunks.join("");
+          })();
+        }
+
         // Record usage asynchronously
         setImmediate(() => {
           try {
@@ -516,6 +548,27 @@ proxy.all("/v1/*", async (c) => {
           isStream: true, isFailover,
           requestBody: bodyText,
         });
+
+        // Fine-tune: write JSONL entry after stream is consumed
+        if (finetuneCapture) {
+          finetuneCapture.then((sseText) => {
+            const requestMessages = extractMessagesFromRequest(bodyJson, inboundFormat);
+            const assistantText = inboundFormat === "anthropic"
+              ? extractTextFromAnthropicSSE(sseText)
+              : extractTextFromOpenAISSE(sseText);
+            if (!assistantText) return;
+            const allMessages = [...requestMessages, { role: "assistant" as const, content: assistantText }];
+            writeFinetuneEntry({
+              conversation_id: deriveConversationId(requestMessages),
+              turn_index: deriveTurnIndex(requestMessages),
+              messages: allMessages,
+              model: originalModel, provider: account.provider,
+              timestamp: new Date().toISOString(),
+              tokens: { input: providerResponse.inputTokens || 0, output: providerResponse.outputTokens || 0 },
+              latency_ms: Date.now() - startTime,
+            });
+          }).catch(() => {});
+        }
 
         const responseHeaders: Record<string, string> = {
           "content-type": "text/event-stream",
@@ -639,6 +692,25 @@ proxy.all("/v1/*", async (c) => {
         responseBody: responseBodyStr,
         errorMessage: providerResponse.status >= 400 ? responseBodyStr.substring(0, 1000) : undefined,
       });
+
+      // Fine-tune: write JSONL entry for non-streaming response
+      if (isFinetuneEnabled() && providerResponse.status < 300) {
+        setImmediate(() => {
+          const requestMessages = extractMessagesFromRequest(bodyJson, inboundFormat);
+          const assistantText = extractTextFromResponse(responseBodyStr, inboundFormat);
+          if (!assistantText) return;
+          const allMessages = [...requestMessages, { role: "assistant" as const, content: assistantText }];
+          writeFinetuneEntry({
+            conversation_id: deriveConversationId(requestMessages),
+            turn_index: deriveTurnIndex(requestMessages),
+            messages: allMessages,
+            model: originalModel, provider: account.provider,
+            timestamp: new Date().toISOString(),
+            tokens: { input: providerResponse.inputTokens || 0, output: providerResponse.outputTokens || 0 },
+            latency_ms: Date.now() - startTime,
+          });
+        });
+      }
 
       const upstreamContentType = providerResponse.headers["content-type"] || "application/json";
 
