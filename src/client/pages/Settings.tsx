@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Copy, Check, Loader2, RefreshCw } from "lucide-react";
+import { Copy, Check, Loader2, RefreshCw, Download } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
@@ -16,8 +16,12 @@ import {
   rotateGuardrailKey,
   regenerateProxyKey,
   getTenants,
+  getFinetuneInfo as fetchFinetuneInfo,
+  downloadFinetuneExport,
+  clearFinetuneData,
   type ModelLimitsInfo,
   type EncryptionInfo,
+  type FinetuneInfo,
 } from "../lib/api";
 
 export default function Settings() {
@@ -57,11 +61,17 @@ export default function Settings() {
   // Regenerate proxy key
   const [regenerating, setRegenerating] = useState(false);
 
+  // Fine-tune export
+  const [finetuneInfo, setFinetuneInfo] = useState<FinetuneInfo | null>(null);
+  const [finetuneDownloading, setFinetuneDownloading] = useState(false);
+  const [finetuneClearing, setFinetuneClearing] = useState(false);
+
   useEffect(() => {
     loadSettings();
     loadModelLimits();
     loadEncryptionInfo();
     loadTenantCount();
+    loadFinetuneInfo();
   }, []);
 
   async function loadSettings() {
@@ -98,6 +108,46 @@ export default function Settings() {
     } catch {
       // ignore
     }
+  }
+
+  async function loadFinetuneInfo() {
+    try {
+      setFinetuneInfo(await fetchFinetuneInfo());
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleFinetuneDownload() {
+    setFinetuneDownloading(true);
+    try {
+      await downloadFinetuneExport();
+    } catch (err: any) {
+      setSaveMsg({ ok: false, text: err.message || "Download failed" });
+    } finally {
+      setFinetuneDownloading(false);
+    }
+  }
+
+  async function handleFinetuneClear() {
+    if (!confirm("Delete the fine-tune export file? This cannot be undone.")) return;
+    setFinetuneClearing(true);
+    try {
+      await clearFinetuneData();
+      await loadFinetuneInfo();
+      setSaveMsg({ ok: true, text: "Fine-tune data cleared." });
+      setTimeout(() => setSaveMsg(null), 3000);
+    } catch (err: any) {
+      setSaveMsg({ ok: false, text: err.message || "Failed to clear" });
+    } finally {
+      setFinetuneClearing(false);
+    }
+  }
+
+  function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   async function handleRotateAccountKey() {
@@ -260,6 +310,7 @@ export default function Settings() {
     (settings.auto_switch_on_rate_limit || "true") === "true";
   const requestLogging = settings.request_logging === "true";
   const detailedLogging = settings.detailed_request_logging === "true";
+  const finetuneLogging = settings.finetune_logging === "true";
 
   const modelLimitEntries = Object.entries(modelLimits);
 
@@ -451,6 +502,101 @@ export default function Settings() {
               disabled={saving || !requestLogging}
             />
           </div>
+        </div>
+      </Card>
+
+      {/* Fine-tune Export */}
+      <Card
+        title="Fine-tune Export"
+        subtitle="Capture request/response pairs in JSONL for fine-tuning"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">
+                Enable Fine-tune Logging
+              </p>
+              <p className="text-xs text-gray-500">
+                Capture every request and response (including streaming) to a JSONL file
+              </p>
+            </div>
+            <Toggle
+              checked={finetuneLogging}
+              onChange={async (val) => {
+                await handleToggle("finetune_logging", val);
+                await loadFinetuneInfo();
+              }}
+              disabled={saving}
+            />
+          </div>
+
+          {finetuneLogging && (
+            <>
+              <div className="border-t border-gray-800" />
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <p className="text-sm font-medium text-gray-200">
+                    Full Context Mode
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Store entire conversation history per entry. Off = last turn only (recommended, much smaller files)
+                  </p>
+                </div>
+                <Toggle
+                  checked={finetuneInfo?.full_context ?? false}
+                  onChange={async (val) => {
+                    await handleToggle("finetune_full_context", val);
+                    await loadFinetuneInfo();
+                  }}
+                  disabled={saving}
+                />
+              </div>
+            </>
+          )}
+
+          {finetuneInfo && finetuneInfo.file_exists ? (
+            <>
+              <div className="border-t border-gray-800" />
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <p className="text-sm text-gray-300">
+                    {finetuneInfo.entry_count.toLocaleString()} entries
+                    <span className="text-gray-500 mx-2">&middot;</span>
+                    {formatFileSize(finetuneInfo.file_size_bytes)}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Download is gzip compressed
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleFinetuneDownload}
+                    loading={finetuneDownloading}
+                  >
+                    <Download className="h-4 w-4" />
+                    Download .gz
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    onClick={handleFinetuneClear}
+                    loading={finetuneClearing}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </div>
+            </>
+          ) : finetuneLogging ? (
+            <>
+              <div className="border-t border-gray-800" />
+              <p className="text-sm text-gray-500 italic py-2">
+                No data captured yet. Send requests through the proxy to start collecting.
+              </p>
+            </>
+          ) : null}
         </div>
       </Card>
 
