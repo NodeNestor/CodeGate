@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Copy, Check, Loader2 } from "lucide-react";
+import { Copy, Check, Loader2, RefreshCw } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
@@ -14,6 +14,7 @@ import {
   getEncryptionInfo,
   rotateAccountKey,
   rotateGuardrailKey,
+  regenerateProxyKey,
   getTenants,
   type ModelLimitsInfo,
   type EncryptionInfo,
@@ -52,6 +53,9 @@ export default function Settings() {
 
   // Tenant count
   const [tenantCount, setTenantCount] = useState<number | null>(null);
+
+  // Regenerate proxy key
+  const [regenerating, setRegenerating] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -209,6 +213,22 @@ export default function Settings() {
     }
   }
 
+  async function handleRegenerateProxyKey() {
+    if (!confirm("Regenerate proxy API key? All tools using the current key will need to be updated.")) return;
+    setRegenerating(true);
+    setSaveMsg(null);
+    try {
+      const result = await regenerateProxyKey();
+      setSettings((prev) => ({ ...prev, proxy_api_key: result.key, proxy_api_key_source: "db" }));
+      setSaveMsg({ ok: true, text: "Proxy API key regenerated." });
+      setTimeout(() => setSaveMsg(null), 5000);
+    } catch (err: any) {
+      setSaveMsg({ ok: false, text: err.message || "Failed to regenerate key" });
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
   function maskApiKey(key: string): string {
     if (!key || key.length < 8) return key || "Not set";
     return key.slice(0, 4) + "****" + key.slice(-4);
@@ -265,6 +285,174 @@ export default function Settings() {
           {saveMsg.text}
         </div>
       )}
+
+      {/* API Key & Access */}
+      <Card title="API Key & Access" subtitle={settings.multi_tenancy === "true" ? "Tenant-based authentication" : "Proxy authentication key"}>
+        <div className="space-y-4">
+          {/* Key display + actions */}
+          <div className="flex items-center justify-between py-2">
+            <div className="flex items-center gap-3">
+              <code className="text-sm font-mono text-gray-300 bg-gray-800 px-3 py-1.5 rounded-lg">
+                {apiKey ? maskApiKey(apiKey) : "Not configured"}
+              </code>
+              {settings.proxy_api_key_source === "env" && (
+                <Badge variant="warning">ENV</Badge>
+              )}
+              {apiKey && (
+                <Button size="sm" variant="ghost" onClick={handleCopyApiKey}>
+                  {copiedKey ? (
+                    <>
+                      <Check className="h-4 w-4 text-green-400" />
+                      <span className="text-xs text-green-400">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4" />
+                      <span className="text-xs">Copy</span>
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={handleRegenerateProxyKey}
+              loading={regenerating}
+              disabled={settings.proxy_api_key_source === "env"}
+            >
+              <RefreshCw className="h-4 w-4" />
+              Regenerate
+            </Button>
+          </div>
+
+          {settings.proxy_api_key_source === "env" && (
+            <p className="text-xs text-gray-500">
+              Key set via PROXY_API_KEY environment variable
+            </p>
+          )}
+
+          <div className="border-t border-gray-800" />
+
+          {/* Multi-tenancy toggle */}
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">Multi-Tenancy</p>
+              <p className="text-xs text-gray-500">
+                Issue separate API keys per team or project
+              </p>
+            </div>
+            <Toggle
+              checked={settings.multi_tenancy === "true"}
+              onChange={(val) => handleToggle("multi_tenancy", val)}
+              disabled={saving}
+            />
+          </div>
+          {settings.multi_tenancy === "true" && (
+            <>
+              <div className="border-t border-gray-800" />
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-gray-300">
+                  {tenantCount !== null
+                    ? `${tenantCount} tenant${tenantCount !== 1 ? "s" : ""} configured`
+                    : "Loading..."}
+                </p>
+                <a href="/tenants">
+                  <Button variant="secondary" size="sm">
+                    Manage Tenants
+                  </Button>
+                </a>
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
+
+      {/* Routing */}
+      <Card
+        title="Routing"
+        subtitle="Control how requests are routed across accounts"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">
+                Auto-switch on Error
+              </p>
+              <p className="text-xs text-gray-500">
+                Automatically try the next account when an API error occurs
+              </p>
+            </div>
+            <Toggle
+              checked={autoSwitchOnError}
+              onChange={(val) => handleToggle("auto_switch_on_error", val)}
+              disabled={saving}
+            />
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">
+                Auto-switch on Rate Limit
+              </p>
+              <p className="text-xs text-gray-500">
+                Automatically try the next account when rate-limited (429
+                response)
+              </p>
+            </div>
+            <Toggle
+              checked={autoSwitchOnRateLimit}
+              onChange={(val) =>
+                handleToggle("auto_switch_on_rate_limit", val)
+              }
+              disabled={saving}
+            />
+          </div>
+        </div>
+      </Card>
+
+      {/* Request Logging */}
+      <Card
+        title="Request Logging"
+        subtitle="Log proxy requests for debugging and monitoring"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">
+                Enable Request Logging
+              </p>
+              <p className="text-xs text-gray-500">
+                Log all proxy requests with metadata (model, status, tokens,
+                latency)
+              </p>
+            </div>
+            <Toggle
+              checked={requestLogging}
+              onChange={(val) => handleToggle("request_logging", val)}
+              disabled={saving}
+            />
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-200">
+                Detailed Request Logging
+              </p>
+              <p className="text-xs text-gray-500">
+                Also capture full request and response bodies (increases storage)
+              </p>
+            </div>
+            <Toggle
+              checked={detailedLogging}
+              onChange={(val) =>
+                handleToggle("detailed_request_logging", val)
+              }
+              disabled={saving || !requestLogging}
+            />
+          </div>
+        </div>
+      </Card>
 
       {/* Proxy Configuration */}
       <Card title="Proxy Configuration" subtitle="Network ports and endpoints">
@@ -327,113 +515,6 @@ export default function Settings() {
           )}
         </div>
       </Card>
-
-      {/* API Key */}
-      <Card title="API Key" subtitle="Authentication key for proxy access">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <code className="text-sm font-mono text-gray-300 bg-gray-800 px-3 py-1.5 rounded-lg">
-              {apiKey ? maskApiKey(apiKey) : "Not configured"}
-            </code>
-            {apiKey && (
-              <Button size="sm" variant="ghost" onClick={handleCopyApiKey}>
-                {copiedKey ? (
-                  <>
-                    <Check className="h-4 w-4 text-green-400" />
-                    <span className="text-xs text-green-400">Copied</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="h-4 w-4" />
-                    <span className="text-xs">Copy</span>
-                  </>
-                )}
-              </Button>
-            )}
-          </div>
-        </div>
-      </Card>
-
-      {/* Encryption Keys */}
-      {encryptionInfo && (
-        <Card title="Encryption Keys" subtitle="Manage encryption keys for account data and guardrail anonymization">
-          <div className="space-y-4">
-            {/* Decrypt error banner */}
-            {encryptionInfo.decrypt_errors > 0 && (
-              <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-400">
-                {encryptionInfo.decrypt_errors} account(s) have decryption errors. Re-enter their API keys or rotate the account key.
-              </div>
-            )}
-
-            {/* Rotate feedback */}
-            {rotateMsg && (
-              <div className={`text-sm px-4 py-2 rounded-lg ${
-                rotateMsg.ok
-                  ? "text-green-400 bg-green-500/10 border border-green-500/20"
-                  : "text-red-400 bg-red-500/10 border border-red-500/20"
-              }`}>
-                {rotateMsg.text}
-              </div>
-            )}
-
-            {/* Account Key */}
-            <div className="flex items-center justify-between py-2">
-              <div>
-                <p className="text-sm font-medium text-gray-200">Account Key</p>
-                <p className="text-xs text-gray-500">
-                  Encrypts API keys and tokens stored in the database
-                </p>
-                <div className="flex items-center gap-3 mt-1">
-                  <code className="text-xs font-mono text-gray-400 bg-gray-800 px-2 py-0.5 rounded">
-                    {encryptionInfo.account_key.fingerprint}
-                  </code>
-                  <span className="text-xs text-gray-500">
-                    Source: {encryptionInfo.account_key.source}
-                  </span>
-                </div>
-              </div>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={handleRotateAccountKey}
-                loading={rotatingAccount}
-                disabled={encryptionInfo.account_key.source === "env"}
-              >
-                Rotate
-              </Button>
-            </div>
-
-            <div className="border-t border-gray-800" />
-
-            {/* Guardrail Seed */}
-            <div className="flex items-center justify-between py-2">
-              <div>
-                <p className="text-sm font-medium text-gray-200">Guardrail Seed</p>
-                <p className="text-xs text-gray-500">
-                  Deterministic encryption for privacy anonymization
-                </p>
-                <div className="flex items-center gap-3 mt-1">
-                  <code className="text-xs font-mono text-gray-400 bg-gray-800 px-2 py-0.5 rounded">
-                    {encryptionInfo.guardrail_key.fingerprint}
-                  </code>
-                  <span className="text-xs text-gray-500">
-                    Source: {encryptionInfo.guardrail_key.source}
-                  </span>
-                </div>
-              </div>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={handleRotateGuardrailKey}
-                loading={rotatingGuardrail}
-                disabled={encryptionInfo.guardrail_key.source === "env"}
-              >
-                Reroll
-              </Button>
-            </div>
-          </div>
-        </Card>
-      )}
 
       {/* Model Limits */}
       <Card
@@ -565,109 +646,86 @@ export default function Settings() {
         </div>
       </Card>
 
-      {/* Request Logging */}
-      <Card
-        title="Request Logging"
-        subtitle="Log proxy requests for debugging and monitoring"
-      >
-        <div className="space-y-4">
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <p className="text-sm font-medium text-gray-200">
-                Enable Request Logging
-              </p>
-              <p className="text-xs text-gray-500">
-                Log all proxy requests with metadata (model, status, tokens,
-                latency)
-              </p>
-            </div>
-            <Toggle
-              checked={requestLogging}
-              onChange={(val) => handleToggle("request_logging", val)}
-              disabled={saving}
-            />
-          </div>
-          <div className="border-t border-gray-800" />
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <p className="text-sm font-medium text-gray-200">
-                Detailed Request Logging
-              </p>
-              <p className="text-xs text-gray-500">
-                Also capture full request and response bodies (increases storage)
-              </p>
-            </div>
-            <Toggle
-              checked={detailedLogging}
-              onChange={(val) =>
-                handleToggle("detailed_request_logging", val)
-              }
-              disabled={saving || !requestLogging}
-            />
-          </div>
-        </div>
-      </Card>
+      {/* Encryption Keys */}
+      {encryptionInfo && (
+        <Card title="Encryption Keys" subtitle="Manage encryption keys for account data and guardrail anonymization">
+          <div className="space-y-4">
+            {/* Decrypt error banner */}
+            {encryptionInfo.decrypt_errors > 0 && (
+              <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-400">
+                {encryptionInfo.decrypt_errors} account(s) have decryption errors. Re-enter their API keys or rotate the account key.
+              </div>
+            )}
 
-      {/* Routing */}
-      <Card
-        title="Routing"
-        subtitle="Control how requests are routed across accounts"
-      >
-        <div className="space-y-4">
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <p className="text-sm font-medium text-gray-200">
-                Auto-switch on Error
-              </p>
-              <p className="text-xs text-gray-500">
-                Automatically try the next account when an API error occurs
-              </p>
-            </div>
-            <Toggle
-              checked={autoSwitchOnError}
-              onChange={(val) => handleToggle("auto_switch_on_error", val)}
-              disabled={saving}
-            />
-          </div>
-          <div className="border-t border-gray-800" />
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <p className="text-sm font-medium text-gray-200">
-                Auto-switch on Rate Limit
-              </p>
-              <p className="text-xs text-gray-500">
-                Automatically try the next account when rate-limited (429
-                response)
-              </p>
-            </div>
-            <Toggle
-              checked={autoSwitchOnRateLimit}
-              onChange={(val) =>
-                handleToggle("auto_switch_on_rate_limit", val)
-              }
-              disabled={saving}
-            />
-          </div>
-        </div>
-      </Card>
+            {/* Rotate feedback */}
+            {rotateMsg && (
+              <div className={`text-sm px-4 py-2 rounded-lg ${
+                rotateMsg.ok
+                  ? "text-green-400 bg-green-500/10 border border-green-500/20"
+                  : "text-red-400 bg-red-500/10 border border-red-500/20"
+              }`}>
+                {rotateMsg.text}
+              </div>
+            )}
 
-      {/* Multi-Tenancy */}
-      <Card title="Multi-Tenancy" subtitle="Manage external API access with tenant keys">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-gray-300">
-              {tenantCount !== null
-                ? `${tenantCount} tenant${tenantCount !== 1 ? "s" : ""} configured`
-                : "Loading..."}
-            </p>
+            {/* Account Key */}
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <p className="text-sm font-medium text-gray-200">Account Key</p>
+                <p className="text-xs text-gray-500">
+                  Encrypts API keys and tokens stored in the database
+                </p>
+                <div className="flex items-center gap-3 mt-1">
+                  <code className="text-xs font-mono text-gray-400 bg-gray-800 px-2 py-0.5 rounded">
+                    {encryptionInfo.account_key.fingerprint}
+                  </code>
+                  <span className="text-xs text-gray-500">
+                    Source: {encryptionInfo.account_key.source}
+                  </span>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleRotateAccountKey}
+                loading={rotatingAccount}
+                disabled={encryptionInfo.account_key.source === "env"}
+              >
+                Rotate
+              </Button>
+            </div>
+
+            <div className="border-t border-gray-800" />
+
+            {/* Guardrail Seed */}
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <p className="text-sm font-medium text-gray-200">Guardrail Seed</p>
+                <p className="text-xs text-gray-500">
+                  Deterministic encryption for privacy anonymization
+                </p>
+                <div className="flex items-center gap-3 mt-1">
+                  <code className="text-xs font-mono text-gray-400 bg-gray-800 px-2 py-0.5 rounded">
+                    {encryptionInfo.guardrail_key.fingerprint}
+                  </code>
+                  <span className="text-xs text-gray-500">
+                    Source: {encryptionInfo.guardrail_key.source}
+                  </span>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleRotateGuardrailKey}
+                loading={rotatingGuardrail}
+                disabled={encryptionInfo.guardrail_key.source === "env"}
+              >
+                Reroll
+              </Button>
+            </div>
           </div>
-          <a href="/tenants">
-            <Button variant="secondary" size="sm">
-              Manage Tenants
-            </Button>
-          </a>
-        </div>
-      </Card>
+        </Card>
+      )}
     </div>
   );
 }

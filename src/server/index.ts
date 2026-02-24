@@ -3,10 +3,11 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
+import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
-import { initDB, getSetting, setSetting, startLogRetentionCleanup } from "./db.js";
+import { initDB, getSetting, setSetting, startLogRetentionCleanup, getTenants, createTenant } from "./db.js";
 import accountsRouter from "./routes/accounts.js";
 import configsRouter from "./routes/configs.js";
 import settingsRouter from "./routes/settings.js";
@@ -37,6 +38,28 @@ if (!getSetting("request_logging")) {
 }
 if (!getSetting("detailed_request_logging")) {
   setSetting("detailed_request_logging", "false");
+}
+
+// Default multi_tenancy to false if not set
+if (!getSetting("multi_tenancy")) {
+  setSetting("multi_tenancy", "false");
+}
+
+if (getSetting("multi_tenancy") === "true") {
+  // Tenant mode: auto-create Default tenant on first boot
+  if (getTenants().length === 0) {
+    const result = createTenant({ name: "Default", rate_limit: 0 });
+    setSetting("proxy_api_key", result.raw_api_key);
+    setSetting("default_tenant_id", result.tenant.id);
+    console.log(`[init] Default tenant created — API key: ${result.raw_api_key.slice(0, 12)}...`);
+  }
+} else {
+  // Simple mode: generate a random key if none exists
+  if (!getSetting("proxy_api_key")) {
+    const key = "cgk_" + crypto.randomBytes(16).toString("hex");
+    setSetting("proxy_api_key", key);
+    console.log(`[init] Proxy API key generated: ${key.slice(0, 12)}...`);
+  }
 }
 
 // Initialize guardrails system (register builtins, load DB mappings, sync config)

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { getAllSettings, setSetting, getAccountsWithDecryptErrors, reEncryptAllAccounts } from "../db.js";
+import crypto from "node:crypto";
+import { getAllSettings, getSetting, setSetting, getAccountsWithDecryptErrors, reEncryptAllAccounts, rotateTenantKey, getTenants, createTenant } from "../db.js";
 import { getAllModels, getModelsForProvider, invalidateModelCache } from "../model-fetcher.js";
 import { getAllModelLimits, setModelLimit, deleteModelLimit } from "../model-limits.js";
 import {
@@ -48,6 +49,16 @@ settings.put("/", async (c) => {
         setSetting(key, JSON.stringify(value));
       } else {
         setSetting(key, value);
+      }
+    }
+
+    // Auto-create Default tenant when multi-tenancy is turned on
+    if (body.multi_tenancy === "true") {
+      const tenants = getTenants();
+      if (tenants.length === 0) {
+        const result = createTenant({ name: "Default", rate_limit: 0 });
+        setSetting("proxy_api_key", result.raw_api_key);
+        setSetting("default_tenant_id", result.tenant.id);
       }
     }
 
@@ -166,6 +177,29 @@ settings.post("/encryption/rotate-guardrail-key", (c) => {
     return c.json({
       fingerprint: getKeyFingerprint(newKey),
     });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// POST /api/settings/regenerate-proxy-key - regenerate the proxy API key
+settings.post("/regenerate-proxy-key", (c) => {
+  try {
+    const tenantId = getSetting("default_tenant_id");
+    if (tenantId) {
+      // Tenant mode: rotate the default tenant's key
+      const result = rotateTenantKey(tenantId);
+      if (!result) {
+        return c.json({ error: "Default tenant not found" }, 404);
+      }
+      setSetting("proxy_api_key", result.raw_api_key);
+      return c.json({ key: result.raw_api_key });
+    } else {
+      // Simple mode: generate a new random key
+      const key = "cgk_" + crypto.randomBytes(16).toString("hex");
+      setSetting("proxy_api_key", key);
+      return c.json({ key });
+    }
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
   }
