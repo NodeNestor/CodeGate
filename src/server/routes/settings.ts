@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import { getAllSettings, getSetting, setSetting, getAccountsWithDecryptErrors, reEncryptAllAccounts, rotateTenantKey, getTenants, createTenant } from "../db.js";
+import { getFinetuneInfo, clearFinetuneData, getFinetuneFilePath, gzipFinetuneFile } from "../finetune.js";
 import { getAllModels, getModelsForProvider, invalidateModelCache } from "../model-fetcher.js";
 import { getAllModelLimits, setModelLimit, deleteModelLimit } from "../model-limits.js";
 import {
@@ -200,6 +202,47 @@ settings.post("/regenerate-proxy-key", (c) => {
       setSetting("proxy_api_key", key);
       return c.json({ key });
     }
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// ─── Fine-tune export ────────────────────────────────────────────────────────
+
+// GET /api/settings/finetune — info about the finetune export
+settings.get("/finetune", (c) => {
+  try {
+    return c.json(getFinetuneInfo());
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// GET /api/settings/finetune/download — download gzipped JSONL file
+settings.get("/finetune/download", (c) => {
+  try {
+    const compressed = gzipFinetuneFile();
+    if (!compressed) {
+      return c.json({ error: "No finetune export file found" }, 404);
+    }
+    return new Response(new Uint8Array(compressed), {
+      status: 200,
+      headers: {
+        "content-type": "application/gzip",
+        "content-disposition": 'attachment; filename="finetune-export.jsonl.gz"',
+        "content-encoding": "identity",
+      },
+    });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// DELETE /api/settings/finetune — clear the JSONL file
+settings.delete("/finetune", (c) => {
+  try {
+    clearFinetuneData();
+    return c.json({ deleted: true });
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
   }

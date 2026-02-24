@@ -459,6 +459,41 @@ export async function clearAllLogs(): Promise<{ deleted: number }> {
   });
 }
 
+// ── Fine-tune Export ─────────────────────────────────────────────────────────
+
+export interface FinetuneInfo {
+  enabled: boolean;
+  full_context: boolean;
+  file_exists: boolean;
+  file_size_bytes: number;
+  entry_count: number;
+  file_path: string;
+}
+
+export async function getFinetuneInfo(): Promise<FinetuneInfo> {
+  return request<FinetuneInfo>("/settings/finetune");
+}
+
+export async function downloadFinetuneExport(): Promise<void> {
+  const res = await fetch(`${BASE}/settings/finetune/download`);
+  if (!res.ok) throw new Error("Download failed");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "finetune-export.jsonl.gz";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export async function clearFinetuneData(): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>("/settings/finetune", {
+    method: "DELETE",
+  });
+}
+
 // ── Model Limits ────────────────────────────────────────────────────────────
 
 export interface ModelLimitsInfo {
