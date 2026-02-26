@@ -1,5 +1,5 @@
 import React from "react";
-import { Pencil, Trash2, Mail, Clock, AlertTriangle, ShieldAlert } from "lucide-react";
+import { Pencil, Trash2, Mail, Clock, AlertTriangle, ShieldAlert, Terminal } from "lucide-react";
 import Badge, {
   getProviderVariant,
   getProviderLabel,
@@ -7,10 +7,11 @@ import Badge, {
   getStatusLabel,
 } from "./ui/Badge";
 import Toggle from "./ui/Toggle";
-import type { Account } from "../lib/api";
+import type { Account, Session } from "../lib/api";
 
 interface AccountCardProps {
   account: Account;
+  session?: Session | null;
   onToggle: (id: string) => void;
   onEdit: (account: Account) => void;
   onDelete: (id: string) => void;
@@ -41,6 +42,7 @@ function isExpiringsSoon(expiresAt?: number | null): boolean {
 
 export default function AccountCard({
   account,
+  session,
   onToggle,
   onEdit,
   onDelete,
@@ -144,6 +146,25 @@ export default function AccountCard({
             <span className="truncate text-xs" title={account.last_error}>
               {account.last_error}
             </span>
+          </div>
+        )}
+
+        {/* Session indicator for OAuth accounts */}
+        {session && session.status === "running" && (
+          <div className="flex items-center gap-2 text-gray-500">
+            <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
+            <span className="text-xs">Token refresh active</span>
+            {session.port && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.open(`http://localhost:${session.port}`, "_blank");
+                }}
+                className="text-xs text-gray-500 hover:text-brand-400 transition-colors ml-auto"
+              >
+                Open Terminal
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -45,7 +45,7 @@ function releasePort(port: number): void {
   usedPorts.delete(port);
 }
 
-export async function createTerminalSession(name?: string): Promise<{
+export async function createTerminalSession(name?: string, autoCommand?: string): Promise<{
   id: string;
   name: string;
   port: number;
@@ -54,6 +54,14 @@ export async function createTerminalSession(name?: string): Promise<{
   const id = uuidv4();
   const sessionName = name || `session-${id.slice(0, 8)}`;
   const port = allocatePort();
+
+  const env = [
+    `PROXY_URL=http://proxy:9212`,
+    `SESSION_ID=${id}`,
+  ];
+  if (autoCommand) {
+    env.push(`AUTO_CMD=${autoCommand}`);
+  }
 
   try {
     const container = await docker.createContainer({
@@ -67,10 +75,7 @@ export async function createTerminalSession(name?: string): Promise<{
         NetworkMode: SESSION_NETWORK,
         RestartPolicy: { Name: "unless-stopped" },
       },
-      Env: [
-        `PROXY_URL=http://proxy:9212`,
-        `SESSION_ID=${id}`,
-      ],
+      Env: env,
     });
 
     await container.start();
@@ -279,6 +284,25 @@ export async function importCredentials(id: string): Promise<{
     } catch { /* not valid JSON */ }
   }
 
+  // Try Google ADC credentials (gcloud auth application-default login)
+  const gcloudCreds = await readContainerFile(
+    container,
+    "/home/node/.config/gcloud/application_default_credentials.json"
+  );
+  if (gcloudCreds) {
+    try {
+      const json = JSON.parse(gcloudCreds);
+      if (json.type === "authorized_user" && json.refresh_token) {
+        return {
+          provider: "gemini",
+          accessToken: json.refresh_token,
+          refreshToken: json.refresh_token,
+          expiresAt: 0, // ADC tokens are refreshed via refresh_token
+        };
+      }
+    } catch { /* not valid JSON */ }
+  }
+
   return null;
 }
 
@@ -352,6 +376,25 @@ async function syncLinkedSessions(): Promise<void> {
       console.error(`[sessions] Failed to sync session "${session.name}":`, err);
     }
   }
+}
+
+/**
+ * Read auth URLs detected in terminal output from a session container.
+ * The entrypoint captures command output via `script` and a background watcher
+ * extracts URLs into /tmp/.auth_urls.
+ */
+export async function readSessionAuthUrls(id: string): Promise<string[]> {
+  const session = dbGetSession(id);
+  if (!session?.container_id) return [];
+
+  const container = docker.getContainer(session.container_id);
+  const raw = await readContainerFile(container, "/tmp/.auth_urls");
+  if (!raw) return [];
+
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("http"));
 }
 
 export function listSessions() {

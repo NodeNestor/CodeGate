@@ -1,28 +1,28 @@
 import React, { useEffect, useState } from "react";
 import AccountCard from "../components/AccountCard";
 import AccountForm from "../components/AccountForm";
+import ConnectAccountWizard from "../components/ConnectAccountWizard";
 import Button from "../components/ui/Button";
-import Modal from "../components/ui/Modal";
 import Badge, { getStatusVariant, getStatusLabel } from "../components/ui/Badge";
-import { Plus, Search, Terminal, Loader2, AlertTriangle, Users } from "lucide-react";
+import { Plus, Search, Loader2, AlertTriangle, Users } from "lucide-react";
 import {
   getAccounts,
-  createAccount,
   updateAccount,
   deleteAccount,
   toggleAccount,
   testAccount,
-  createSession,
-  deleteSession,
-  importCredentials,
+  getSessions,
   type Account,
+  type Session,
 } from "../lib/api";
 
 export default function Accounts() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testMsg, setTestMsg] = useState<{
@@ -31,15 +31,6 @@ export default function Accounts() {
     text: string;
   } | null>(null);
 
-  // Terminal login flow state
-  const [loginModalOpen, setLoginModalOpen] = useState(false);
-  const [loginSessionId, setLoginSessionId] = useState<string | null>(null);
-  const [loginSessionPort, setLoginSessionPort] = useState<number | null>(null);
-  const [loginStarting, setLoginStarting] = useState(false);
-  const [loginImporting, setLoginImporting] = useState(false);
-  const [loginError, setLoginError] = useState("");
-  const [loginSuccess, setLoginSuccess] = useState("");
-
   useEffect(() => {
     loadAccounts();
   }, []);
@@ -47,7 +38,9 @@ export default function Accounts() {
   async function loadAccounts() {
     setLoading(true);
     try {
-      setAccounts(await getAccounts());
+      const [accts, sess] = await Promise.all([getAccounts(), getSessions()]);
+      setAccounts(accts);
+      setSessions(sess);
     } catch (err) {
       console.error("Failed to load accounts:", err);
     } finally {
@@ -72,9 +65,10 @@ export default function Accounts() {
       )
     : accounts;
 
-  function openCreate() {
-    setEditingAccount(null);
-    setFormOpen(true);
+  // Map account_id → session for OAuth session indicators
+  const sessionByAccountId = new Map<string, Session>();
+  for (const s of sessions) {
+    if (s.account_id) sessionByAccountId.set(s.account_id, s);
   }
 
   function openEdit(account: Account) {
@@ -85,8 +79,6 @@ export default function Accounts() {
   async function handleSave(data: Partial<Account> & { api_key?: string }) {
     if (editingAccount) {
       await updateAccount(editingAccount.id, data);
-    } else {
-      await createAccount(data);
     }
     await loadAccounts();
   }
@@ -125,66 +117,6 @@ export default function Accounts() {
     }
   }
 
-  // ── Terminal Login Flow ──────────────────────────────────────────────────
-
-  async function startLoginSession() {
-    setLoginStarting(true);
-    setLoginError("");
-    setLoginSuccess("");
-    try {
-      const session = await createSession("oauth-login");
-      setLoginSessionId(session.id);
-      setLoginSessionPort(session.port);
-      setLoginModalOpen(true);
-    } catch (err: any) {
-      setLoginError(err.message || "Failed to start terminal session");
-      setLoginModalOpen(true);
-    } finally {
-      setLoginStarting(false);
-    }
-  }
-
-  async function handleImportFromSession() {
-    if (!loginSessionId) return;
-    setLoginImporting(true);
-    setLoginError("");
-    try {
-      const result = await importCredentials(loginSessionId);
-      if (result.success) {
-        setLoginSuccess(
-          `Account imported successfully${result.account?.name ? `: ${result.account.name}` : ""}! The session will keep running to refresh tokens automatically.`
-        );
-        await loadAccounts();
-      } else {
-        setLoginError(
-          result.error ||
-            "No credentials found. Run 'claude login' in the terminal first."
-        );
-      }
-    } catch (err: any) {
-      setLoginError(err.message || "Import failed");
-    } finally {
-      setLoginImporting(false);
-    }
-  }
-
-  async function closeLoginModal() {
-    // Only delete the session if credentials were NOT imported.
-    // If credentials were imported, the session stays alive for persistent token refresh.
-    if (loginSessionId && !loginSuccess) {
-      try {
-        await deleteSession(loginSessionId);
-      } catch {
-        // Already gone, that's fine
-      }
-    }
-    setLoginModalOpen(false);
-    setLoginSessionId(null);
-    setLoginSessionPort(null);
-    setLoginError("");
-    setLoginSuccess("");
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -205,16 +137,10 @@ export default function Accounts() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" onClick={startLoginSession} loading={loginStarting}>
-            <Terminal className="h-4 w-4" />
-            Login via Terminal
-          </Button>
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" />
-            Add Account
-          </Button>
-        </div>
+        <Button onClick={() => setWizardOpen(true)}>
+          <Plus className="h-4 w-4" />
+          Connect Account
+        </Button>
       </div>
 
       {/* Status summary */}
@@ -268,14 +194,12 @@ export default function Accounts() {
           <Users className="h-12 w-12 text-gray-600" />
           <p className="text-lg">No accounts configured.</p>
           <p className="text-sm">
-            Add an API key account or login via terminal for OAuth.
+            Connect a provider via API key or terminal login.
           </p>
-          <div className="flex gap-3">
-            <Button variant="secondary" onClick={startLoginSession} loading={loginStarting}>
-              Login via Terminal
-            </Button>
-            <Button onClick={openCreate}>Add Account</Button>
-          </div>
+          <Button onClick={() => setWizardOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Connect Account
+          </Button>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -283,6 +207,7 @@ export default function Accounts() {
             <AccountCard
               key={account.id}
               account={account}
+              session={sessionByAccountId.get(account.id) || null}
               onToggle={handleToggle}
               onEdit={openEdit}
               onDelete={handleDelete}
@@ -294,7 +219,7 @@ export default function Accounts() {
         </div>
       )}
 
-      {/* Form modal (API key accounts) */}
+      {/* Form modal (editing existing accounts only) */}
       <AccountForm
         open={formOpen}
         account={editingAccount}
@@ -302,87 +227,12 @@ export default function Accounts() {
         onSave={handleSave}
       />
 
-      {/* Terminal Login Modal */}
-      <Modal
-        open={loginModalOpen}
-        onClose={closeLoginModal}
-        title="Login via Terminal"
-        maxWidth="max-w-4xl"
-        footer={
-          <>
-            <Button variant="secondary" onClick={closeLoginModal}>
-              Close
-            </Button>
-            <Button
-              onClick={handleImportFromSession}
-              loading={loginImporting}
-              disabled={!loginSessionId}
-            >
-              Import Credentials
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3 text-sm text-blue-300">
-            <p className="font-medium mb-2">Choose a service to log into:</p>
-            <div className="space-y-3">
-              <div>
-                <p className="font-medium text-blue-200">Claude (Anthropic)</p>
-                <ol className="list-decimal list-inside space-y-0.5 text-blue-300/80 ml-2">
-                  <li>Run <code className="bg-blue-500/20 px-1 rounded">claude login</code></li>
-                  <li>Complete the OAuth flow in the browser that opens</li>
-                  <li>Click <strong className="text-blue-300">Import Credentials</strong> above</li>
-                </ol>
-              </div>
-              <div>
-                <p className="font-medium text-blue-200">Codex (OpenAI / ChatGPT)</p>
-                <ol className="list-decimal list-inside space-y-0.5 text-blue-300/80 ml-2">
-                  <li>First, enable <strong className="text-blue-300">cross-device login</strong> in your <a href="https://chatgpt.com/settings" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-200">ChatGPT security settings</a></li>
-                  <li>Run <code className="bg-blue-500/20 px-1 rounded">codex login --device-auth</code></li>
-                  <li>Open the link shown, sign in, and enter the code</li>
-                  <li>Click <strong className="text-blue-300">Import Credentials</strong> above</li>
-                </ol>
-              </div>
-            </div>
-            <p className="text-xs text-blue-400/60 mt-2">
-              Tip: Select text with your mouse to copy. Right-click to paste.
-            </p>
-          </div>
-
-          {loginError && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-400">
-              {loginError}
-            </div>
-          )}
-
-          {loginSuccess && (
-            <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-3 text-sm text-green-400">
-              {loginSuccess}
-            </div>
-          )}
-
-          {/* Embedded terminal */}
-          {loginSessionPort ? (
-            <div className="rounded-lg overflow-hidden border border-gray-700">
-              <iframe
-                src={`http://localhost:${loginSessionPort}`}
-                className="w-full bg-black"
-                style={{ height: "400px" }}
-                title="Login Terminal"
-              />
-            </div>
-          ) : loginError ? (
-            <div className="flex items-center justify-center h-64 text-gray-500">
-              <p>Failed to start terminal session.</p>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center h-64 text-gray-500">
-              <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-            </div>
-          )}
-        </div>
-      </Modal>
+      {/* Connect Account Wizard */}
+      <ConnectAccountWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onAccountCreated={loadAccounts}
+      />
     </div>
   );
 }
