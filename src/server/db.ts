@@ -124,6 +124,7 @@ export interface UsageInput {
   cache_read_tokens?: number;
   cache_write_tokens?: number;
   cost_usd?: number;
+  tenant_id?: string;
 }
 
 export interface UsageStatsOpts {
@@ -646,11 +647,12 @@ export function recordUsage(data: UsageInput): UsageRecord {
   const costUsd = data.cost_usd ?? estimateCost(data.routed_model || data.original_model || "default", inputTokens, outputTokens);
 
   d.prepare(
-    `INSERT INTO usage (id, account_id, config_id, tier, original_model, routed_model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO usage (id, account_id, config_id, tier, original_model, routed_model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(id, data.account_id ?? null, data.config_id ?? null, data.tier ?? null,
     data.original_model ?? null, data.routed_model ?? null,
-    inputTokens, outputTokens, data.cache_read_tokens ?? 0, data.cache_write_tokens ?? 0, costUsd);
+    inputTokens, outputTokens, data.cache_read_tokens ?? 0, data.cache_write_tokens ?? 0, costUsd,
+    data.tenant_id ?? null);
 
   return d.prepare("SELECT * FROM usage WHERE id = ?").get(id) as UsageRecord;
 }
@@ -820,6 +822,7 @@ export interface RequestLogInput {
   error_message?: string;
   request_body?: string;
   response_body?: string;
+  tenant_id?: string;
 }
 
 export interface RequestLogRow {
@@ -848,8 +851,8 @@ export function insertRequestLog(data: RequestLogInput): void {
   const d = getDB();
   const id = uuidv4();
   d.prepare(
-    `INSERT INTO request_logs (id, method, path, inbound_format, account_id, account_name, provider, original_model, routed_model, status_code, input_tokens, output_tokens, latency_ms, is_stream, is_failover, error_message, request_body, response_body)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO request_logs (id, method, path, inbound_format, account_id, account_name, provider, original_model, routed_model, status_code, input_tokens, output_tokens, latency_ms, is_stream, is_failover, error_message, request_body, response_body, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     data.method ?? null,
@@ -868,7 +871,8 @@ export function insertRequestLog(data: RequestLogInput): void {
     data.is_failover ? 1 : 0,
     data.error_message ?? null,
     data.request_body ?? null,
-    data.response_body ?? null
+    data.response_body ?? null,
+    data.tenant_id ?? null
   );
 }
 

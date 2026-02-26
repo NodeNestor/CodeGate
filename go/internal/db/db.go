@@ -189,6 +189,9 @@ func GetConfigTiers(configID string) ([]ConfigTier, error) {
 
 // GetSetting returns a setting value by key.
 func GetSetting(key string) string {
+	if conn == nil {
+		return ""
+	}
 	var val sql.NullString
 	err := conn.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val)
 	if err != nil || !val.Valid {
@@ -210,7 +213,7 @@ func GetMonthlySpend(accountID string) float64 {
 
 // RecordUsage inserts a usage record into the database.
 // This opens a separate write connection since the main one is read-only.
-func RecordUsage(accountID, configID, tier, originalModel, routedModel string, inputTokens, outputTokens, cacheRead, cacheWrite int, costUSD float64) error {
+func RecordUsage(accountID, configID, tier, originalModel, routedModel string, inputTokens, outputTokens, cacheRead, cacheWrite int, costUSD float64, tenantID ...string) error {
 	dataDir := os.Getenv("DATA_DIR")
 	if dataDir == "" {
 		dataDir = "./data"
@@ -223,10 +226,15 @@ func RecordUsage(accountID, configID, tier, originalModel, routedModel string, i
 	}
 	defer wConn.Close()
 
+	tid := ""
+	if len(tenantID) > 0 {
+		tid = tenantID[0]
+	}
+
 	id := generateID()
-	_, err = wConn.Exec(`INSERT INTO usage (id, account_id, config_id, tier, original_model, routed_model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = wConn.Exec(`INSERT INTO usage (id, account_id, config_id, tier, original_model, routed_model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, nullStr(accountID), nullStr(configID), nullStr(tier), nullStr(originalModel), nullStr(routedModel),
-		inputTokens, outputTokens, cacheRead, cacheWrite, costUSD)
+		inputTokens, outputTokens, cacheRead, cacheWrite, costUSD, nullStr(tid))
 	return err
 }
 
@@ -256,7 +264,7 @@ func UpdateAccountStatus(accountID, status, errMsg string) {
 }
 
 // InsertRequestLog inserts a request log entry.
-func InsertRequestLog(method, path, inboundFormat, accountID, accountName, provider, originalModel, routedModel string, statusCode, inputTokens, outputTokens, latencyMs int, isStream, isFailover bool, errorMessage string) {
+func InsertRequestLog(method, path, inboundFormat, accountID, accountName, provider, originalModel, routedModel string, statusCode, inputTokens, outputTokens, latencyMs int, isStream, isFailover bool, errorMessage string, tenantID ...string) {
 	streamInt, failoverInt := 0, 0
 	if isStream {
 		streamInt = 1
@@ -264,8 +272,12 @@ func InsertRequestLog(method, path, inboundFormat, accountID, accountName, provi
 	if isFailover {
 		failoverInt = 1
 	}
-	writeExec(`INSERT INTO request_logs (id, method, path, inbound_format, account_id, account_name, provider, original_model, routed_model, status_code, input_tokens, output_tokens, latency_ms, is_stream, is_failover, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		generateID(), method, path, inboundFormat, accountID, accountName, provider, originalModel, routedModel, statusCode, inputTokens, outputTokens, latencyMs, streamInt, failoverInt, nullStr(errorMessage))
+	tid := ""
+	if len(tenantID) > 0 {
+		tid = tenantID[0]
+	}
+	writeExec(`INSERT INTO request_logs (id, method, path, inbound_format, account_id, account_name, provider, original_model, routed_model, status_code, input_tokens, output_tokens, latency_ms, is_stream, is_failover, error_message, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		generateID(), method, path, inboundFormat, accountID, accountName, provider, originalModel, routedModel, statusCode, inputTokens, outputTokens, latencyMs, streamInt, failoverInt, nullStr(errorMessage), nullStr(tid))
 }
 
 // TenantRow represents a tenant from the database.
