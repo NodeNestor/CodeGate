@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -398,27 +399,35 @@ var cryptoRandRead = func(b []byte) (int, error) {
 	return randRead(b)
 }
 
-// getEncryptionKey reads the encryption key from the data directory.
+// getEncryptionKey reads the account encryption key from the data directory.
+// Compatible with Node.js which stores the key at DATA_DIR/.account-key
+// (hex-encoded 32-byte key). Falls back to legacy .master-key.
 func getEncryptionKey() []byte {
 	dataDir := os.Getenv("DATA_DIR")
 	if dataDir == "" {
 		dataDir = "./data"
 	}
-	keyPath := filepath.Join(dataDir, "encryption.key")
-	data, err := os.ReadFile(keyPath)
-	if err != nil {
-		return nil
+
+	// Try .account-key first (current Node.js format), then legacy .master-key
+	for _, name := range []string{".account-key", ".master-key", "encryption.key"} {
+		keyPath := filepath.Join(dataDir, name)
+		data, err := os.ReadFile(keyPath)
+		if err != nil {
+			continue
+		}
+		key, err := hex.DecodeString(strings.TrimSpace(string(data)))
+		if err != nil {
+			continue
+		}
+		if len(key) == 32 {
+			return key
+		}
 	}
-	// Key file contains hex-encoded 32-byte key
-	key, err := hex.DecodeString(strings.TrimSpace(string(data)))
-	if err != nil {
-		return nil
-	}
-	return key
+	return nil
 }
 
-// encryptValue encrypts a value with AES-256-GCM.
-// Format: hex(iv):hex(ciphertext+tag)
+// encryptValue encrypts a value with AES-256-GCM using 16-byte IV.
+// Output format: base64(iv[16] + ciphertext + authTag[16]) — compatible with Node.js.
 func encryptValue(value string, key []byte) string {
 	if key == nil || value == "" {
 		return ""
@@ -427,38 +436,57 @@ func encryptValue(value string, key []byte) string {
 	if err != nil {
 		return ""
 	}
-	aesGCM, err := cipher.NewGCM(block)
+	aesGCM, err := cipher.NewGCMWithNonceSize(block, 16)
 	if err != nil {
 		return ""
 	}
-	iv := make([]byte, aesGCM.NonceSize())
+	iv := make([]byte, 16)
 	if _, err := rand.Read(iv); err != nil {
 		return ""
 	}
 	ciphertext := aesGCM.Seal(nil, iv, []byte(value), nil)
-	return hex.EncodeToString(iv) + ":" + hex.EncodeToString(ciphertext)
+	// Combine iv + ciphertext+tag, base64 encode
+	combined := make([]byte, 0, len(iv)+len(ciphertext))
+	combined = append(combined, iv...)
+	combined = append(combined, ciphertext...)
+	return base64.StdEncoding.EncodeToString(combined)
 }
 
 // decryptValue decrypts an AES-256-GCM encrypted value.
-// Format: hex(iv):hex(ciphertext+tag)
+// Supports two formats:
+//   - Node.js format: base64(iv[16] + ciphertext + authTag[16]) — uses 16-byte nonce
+//   - Legacy Go format: hex(iv):hex(ciphertext+tag) — uses 12-byte nonce
 func decryptValue(encrypted string, key []byte) string {
 	if key == nil || encrypted == "" {
 		return ""
 	}
 
-	parts := strings.SplitN(encrypted, ":", 2)
-	if len(parts) != 2 {
-		return ""
-	}
+	var iv, ciphertext []byte
+	nonceSize := 16 // default: Node.js format
 
-	iv, err := hex.DecodeString(parts[0])
-	if err != nil {
-		return ""
-	}
-
-	ciphertext, err := hex.DecodeString(parts[1])
-	if err != nil {
-		return ""
+	if parts := strings.SplitN(encrypted, ":", 2); len(parts) == 2 {
+		// Legacy Go hex format: hex(iv):hex(ciphertext+tag)
+		var err error
+		iv, err = hex.DecodeString(parts[0])
+		if err != nil {
+			return ""
+		}
+		ciphertext, err = hex.DecodeString(parts[1])
+		if err != nil {
+			return ""
+		}
+		nonceSize = len(iv) // use actual IV length (typically 12)
+	} else {
+		// Node.js base64 format: base64(iv[16] + ciphertext + authTag[16])
+		combined, err := base64.StdEncoding.DecodeString(encrypted)
+		if err != nil {
+			return ""
+		}
+		if len(combined) < 33 { // 16 iv + 1 min ciphertext + 16 tag
+			return ""
+		}
+		iv = combined[:16]
+		ciphertext = combined[16:] // ciphertext + authTag (GCM expects them together)
 	}
 
 	block, err := aes.NewCipher(key)
@@ -466,7 +494,7 @@ func decryptValue(encrypted string, key []byte) string {
 		return ""
 	}
 
-	aesGCM, err := cipher.NewGCM(block)
+	aesGCM, err := cipher.NewGCMWithNonceSize(block, nonceSize)
 	if err != nil {
 		return ""
 	}
