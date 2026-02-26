@@ -845,6 +845,7 @@ export interface RequestLogRow {
   error_message: string | null;
   request_body: string | null;
   response_body: string | null;
+  tenant_id: string | null;
 }
 
 export function insertRequestLog(data: RequestLogInput): void {
@@ -908,7 +909,7 @@ export function getRequestLogs(opts: {
 
   const totalRow = d.prepare(`SELECT COUNT(*) AS cnt FROM request_logs ${where}`).get(...params) as { cnt: number };
   const logs = d.prepare(
-    `SELECT id, timestamp, method, path, inbound_format, account_id, account_name, provider, original_model, routed_model, status_code, input_tokens, output_tokens, latency_ms, is_stream, is_failover, error_message
+    `SELECT id, timestamp, method, path, inbound_format, account_id, account_name, provider, original_model, routed_model, status_code, input_tokens, output_tokens, latency_ms, is_stream, is_failover, error_message, tenant_id
      FROM request_logs ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`
   ).all(...params, limit, offset) as RequestLogRow[];
 

@@ -110,36 +110,43 @@ function validateApiKey(c: any): { valid: boolean; tenantId?: string } {
   const authHeader = c.req.header("authorization");
   const key = xApiKey || (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null);
 
-  // 1. Legacy: PROXY_API_KEY env var (backwards compat)
-  if (envKey) {
-    return { valid: key === envKey };
-  }
-
-  // 2. Simple mode: match against stored proxy_api_key
-  if (getSetting("multi_tenancy") !== "true") {
-    const storedKey = getSetting("proxy_api_key");
-    if (!storedKey) return { valid: true }; // no key configured → open
-    return { valid: key === storedKey };
-  }
-
-  // 3. No tenants at all → open mode (pre-first-boot edge case)
-  if (!hasTenants()) {
+  // 1. Global key: PROXY_API_KEY env var (backwards compat)
+  //    If it matches, allow without tenant context.
+  //    If it doesn't match, fall through to tenant resolution (matching Go proxy behavior).
+  if (envKey && key === envKey) {
     return { valid: true };
   }
 
-  // 4. No key provided → reject
-  if (!key) {
+  // 2. Multi-tenant mode: resolve tenant by key
+  if (getSetting("multi_tenancy") === "true") {
+    // No tenants at all → open mode (pre-first-boot edge case)
+    if (!hasTenants()) {
+      return { valid: true };
+    }
+
+    // No key provided → reject
+    if (!key) {
+      return { valid: false };
+    }
+
+    // Tenant key lookup via hash
+    const hash = hashApiKey(key);
+    const tenant = getTenantByKeyHash(hash);
+    if (tenant) {
+      return { valid: true, tenantId: tenant.id };
+    }
+
     return { valid: false };
   }
 
-  // 5. Tenant key lookup via hash
-  const hash = hashApiKey(key);
-  const tenant = getTenantByKeyHash(hash);
-  if (tenant) {
-    return { valid: true, tenantId: tenant.id };
+  // 3. Simple mode (no multi-tenancy)
+  if (envKey) {
+    // Env key was set but didn't match (checked above) → reject
+    return { valid: false };
   }
-
-  return { valid: false };
+  const storedKey = getSetting("proxy_api_key");
+  if (!storedKey) return { valid: true }; // no key configured → open
+  return { valid: key === storedKey };
 }
 
 // ─── OpenAI Models endpoint ─────────────────────────────────────────────────
