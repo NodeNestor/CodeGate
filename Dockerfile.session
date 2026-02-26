@@ -14,9 +14,17 @@ RUN curl -sL https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_6
 # Install CLI tools (Claude Code + Codex)
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
+# Install Google Cloud SDK (for gcloud auth application-default login)
+RUN curl -sL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz | tar -xz -C /opt \
+    && /opt/google-cloud-sdk/install.sh --quiet --path-update true \
+    && ln -s /opt/google-cloud-sdk/bin/gcloud /usr/local/bin/gcloud
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 WORKDIR /home/node
 USER node
 
 EXPOSE 7681
 
-CMD ["ttyd", "-W", "-p", "7681", "-t", "enableClipboard=true", "bash"]
+ENTRYPOINT ["entrypoint.sh"]
