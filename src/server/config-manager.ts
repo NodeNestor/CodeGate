@@ -1,5 +1,6 @@
 import {
   getActiveConfig,
+  getConfig,
   getConfigTiers,
   getEnabledAccounts,
   getMonthlySpend,
@@ -33,8 +34,20 @@ const roundRobinCounters = new Map<string, number>();
  * 6. Return primary + fallback accounts
  */
 export function resolveRoute(model: string): ResolvedRoute | null {
+  return resolveRouteWithConfig(model, undefined);
+}
+
+/**
+ * Resolve a route for a given model using a specific config (tenant-scoped).
+ * Falls back to global active config if configId is not found.
+ */
+export function resolveRouteForConfig(model: string, configId: string): ResolvedRoute | null {
+  return resolveRouteWithConfig(model, configId);
+}
+
+function resolveRouteWithConfig(model: string, configId: string | undefined): ResolvedRoute | null {
   const tier = detectTier(model);
-  const activeConfig = getActiveConfig();
+  const activeConfig = configId ? getConfig(configId) ?? getActiveConfig() : getActiveConfig();
 
   if (!activeConfig) {
     // No active config: try to find any enabled account

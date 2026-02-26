@@ -23,7 +23,7 @@
 
 import { Hono } from "hono";
 
-import { resolveRoute } from "../config-manager.js";
+import { resolveRoute, resolveRouteForConfig } from "../config-manager.js";
 import {
   recordUsage,
   recordAccountSuccess,
@@ -32,9 +32,11 @@ import {
   getSetting,
   insertRequestLog,
   getTenantByKeyHash,
+  getTenant,
   hashApiKey,
   hasTenants,
   type AccountDecrypted,
+  type TenantWithSettings,
 } from "../db.js";
 import {
   setCooldown,
@@ -174,8 +176,8 @@ proxy.all("/v1/*", async (c) => {
     });
   }
 
-  // 1. Validate proxy API key
-  const { valid } = validateApiKey(c);
+  // 1. Validate proxy API key (tenant-aware)
+  const { valid, tenantId } = validateApiKey(c);
   if (!valid) {
     return c.json(
       {
@@ -188,6 +190,26 @@ proxy.all("/v1/*", async (c) => {
       401
     );
   }
+
+  // 1.5 Resolve full tenant context if multi-tenant
+  const tenantCtx: TenantWithSettings | undefined = tenantId ? getTenant(tenantId) : undefined;
+
+  // Tenant-level rate limiting
+  if (tenantCtx && tenantCtx.rate_limit > 0) {
+    if (checkAndRecordRequest(`tenant:${tenantCtx.id}`, tenantCtx.rate_limit)) {
+      const fmt = path.includes("/chat/completions") ? "openai" : "anthropic";
+      const errPayload = fmt === "openai"
+        ? { error: { message: "Rate limit exceeded", type: "rate_limit_error", code: 429 } }
+        : { type: "error", error: { type: "rate_limit_error", message: "Rate limit exceeded" } };
+      return c.json(errPayload, 429);
+    }
+  }
+
+  // Helper: read settings with tenant-scoped fallback
+  const getSettingScoped = (key: string): string | undefined => {
+    if (tenantCtx?.settings?.[key] !== undefined) return tenantCtx.settings[key];
+    return getSetting(key);
+  };
 
   // 2. Detect inbound format from path
   const inboundFormat: InboundFormat = path.includes("/chat/completions")
@@ -252,8 +274,10 @@ proxy.all("/v1/*", async (c) => {
     }
   }
 
-  // 6. Guardrails: anonymize outgoing request body
-  const guardrailsActive = isGuardrailsEnabled();
+  // 6. Guardrails: anonymize outgoing request body (tenant-scoped)
+  const guardrailsActive = tenantCtx?.settings?.guardrails_enabled !== undefined
+    ? tenantCtx.settings.guardrails_enabled === "true"
+    : isGuardrailsEnabled();
   if (guardrailsActive && bodyText) {
     try {
       anthropicBody = runGuardrailsOnRequestBody(anthropicBody as any) as any;
@@ -265,8 +289,10 @@ proxy.all("/v1/*", async (c) => {
   // 7. Detect tier via model-mapper
   const tier = detectTier(originalModel);
 
-  // 8. Resolve route via config-manager
-  const route = resolveRoute(originalModel);
+  // 8. Resolve route via config-manager (tenant-scoped if tenant has a config)
+  const route = tenantCtx?.config_id
+    ? resolveRouteForConfig(originalModel, tenantCtx.config_id)
+    : resolveRoute(originalModel);
 
   if (!route) {
     const errPayload = inboundFormat === "openai"
@@ -283,8 +309,8 @@ proxy.all("/v1/*", async (c) => {
 
   const allCandidates = sortByCooldown(rawCandidates);
 
-  const autoSwitchOnError = getSetting("auto_switch_on_error") !== "false";
-  const autoSwitchOnRateLimit = getSetting("auto_switch_on_rate_limit") !== "false";
+  const autoSwitchOnError = getSettingScoped("auto_switch_on_error") !== "false";
+  const autoSwitchOnRateLimit = getSettingScoped("auto_switch_on_rate_limit") !== "false";
 
   // Extract request headers for forwarding
   const reqHeaders: Record<string, string> = {};
@@ -531,6 +557,7 @@ proxy.all("/v1/*", async (c) => {
               output_tokens: providerResponse.outputTokens,
               cache_read_tokens: providerResponse.cacheReadTokens,
               cache_write_tokens: providerResponse.cacheWriteTokens,
+              tenant_id: tenantId,
             });
           } catch (err) {
             console.error("[proxy] Failed to record usage:", err);
@@ -547,6 +574,7 @@ proxy.all("/v1/*", async (c) => {
           latencyMs: Date.now() - startTime,
           isStream: true, isFailover,
           requestBody: bodyText,
+          tenantId,
         });
 
         // Fine-tune: write JSONL entry after stream is consumed
@@ -578,8 +606,11 @@ proxy.all("/v1/*", async (c) => {
           "x-proxy-strategy": isFailover ? `${strategy}+failover` : strategy,
           "access-control-allow-origin": "*",
           "access-control-allow-headers": "*",
-          "access-control-expose-headers": "x-proxy-account, x-proxy-strategy",
+          "access-control-expose-headers": "x-proxy-account, x-proxy-strategy, x-proxy-tenant",
         };
+        if (tenantCtx) {
+          responseHeaders["x-proxy-tenant"] = tenantCtx.name;
+        }
 
         return new Response(responseStream, {
           status: providerResponse.status,
@@ -673,6 +704,7 @@ proxy.all("/v1/*", async (c) => {
             output_tokens: providerResponse.outputTokens,
             cache_read_tokens: providerResponse.cacheReadTokens,
             cache_write_tokens: providerResponse.cacheWriteTokens,
+            tenant_id: tenantId,
           });
         } catch (err) {
           console.error("[proxy] Failed to record usage:", err);
@@ -691,6 +723,7 @@ proxy.all("/v1/*", async (c) => {
         requestBody: bodyText,
         responseBody: responseBodyStr,
         errorMessage: providerResponse.status >= 400 ? responseBodyStr.substring(0, 1000) : undefined,
+        tenantId,
       });
 
       // Fine-tune: write JSONL entry for non-streaming response
@@ -720,8 +753,11 @@ proxy.all("/v1/*", async (c) => {
         "x-proxy-strategy": isFailover ? `${strategy}+failover` : strategy,
         "access-control-allow-origin": "*",
         "access-control-allow-headers": "*",
-        "access-control-expose-headers": "x-proxy-account, x-proxy-strategy",
+        "access-control-expose-headers": "x-proxy-account, x-proxy-strategy, x-proxy-tenant",
       };
+      if (tenantCtx) {
+        responseHeaders["x-proxy-tenant"] = tenantCtx.name;
+      }
 
       return new Response(responseBodyStr, {
         status: providerResponse.status,
@@ -857,6 +893,7 @@ function logRequest(opts: {
   errorMessage?: string;
   requestBody?: string;
   responseBody?: string;
+  tenantId?: string;
 }): void {
   if (getSetting("request_logging") !== "true") return;
 
@@ -882,6 +919,7 @@ function logRequest(opts: {
         error_message: opts.errorMessage,
         request_body: detailed ? opts.requestBody : undefined,
         response_body: detailed ? opts.responseBody : undefined,
+        tenant_id: opts.tenantId,
       });
     } catch (err) {
       console.error("[proxy] Failed to log request:", err);

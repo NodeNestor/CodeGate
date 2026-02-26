@@ -386,15 +386,19 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 			// Record usage async
 			latencyMs := int(time.Since(startTime).Milliseconds())
+			tenantIDForLog := ""
+			if tenantCtx != nil {
+				tenantIDForLog = tenantCtx.ID
+			}
 			go func() {
 				costUSD := models.EstimateCost(targetModel, provResp.InputTokens, provResp.OutputTokens)
 				db.RecordUsage(account.ID, route.ConfigID, string(tier), originalModel, targetModel,
-					provResp.InputTokens, provResp.OutputTokens, provResp.CacheReadTokens, provResp.CacheWriteTokens, costUSD)
+					provResp.InputTokens, provResp.OutputTokens, provResp.CacheReadTokens, provResp.CacheWriteTokens, costUSD, tenantIDForLog)
 
 				if getSetting("request_logging") == "true" {
 					db.InsertRequestLog(method, path, inboundFormat, account.ID, account.Name, account.Provider,
 						originalModel, targetModel, provResp.Status, provResp.InputTokens, provResp.OutputTokens,
-						latencyMs, true, isFailover, "")
+						latencyMs, true, isFailover, "", tenantIDForLog)
 				}
 			}()
 
@@ -506,10 +510,14 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 		// Record usage async
 		latencyMs := int(time.Since(startTime).Milliseconds())
+		tenantIDForLog2 := ""
+		if tenantCtx != nil {
+			tenantIDForLog2 = tenantCtx.ID
+		}
 		go func() {
 			costUSD := models.EstimateCost(targetModel, provResp.InputTokens, provResp.OutputTokens)
 			db.RecordUsage(account.ID, route.ConfigID, string(tier), originalModel, targetModel,
-				provResp.InputTokens, provResp.OutputTokens, provResp.CacheReadTokens, provResp.CacheWriteTokens, costUSD)
+				provResp.InputTokens, provResp.OutputTokens, provResp.CacheReadTokens, provResp.CacheWriteTokens, costUSD, tenantIDForLog2)
 
 			if getSetting("request_logging") == "true" {
 				errMessage := ""
@@ -522,7 +530,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 				}
 				db.InsertRequestLog(method, path, inboundFormat, account.ID, account.Name, account.Provider,
 					originalModel, targetModel, provResp.Status, provResp.InputTokens, provResp.OutputTokens,
-					latencyMs, false, isFailover, errMessage)
+					latencyMs, false, isFailover, errMessage, tenantIDForLog2)
 			}
 		}()
 
