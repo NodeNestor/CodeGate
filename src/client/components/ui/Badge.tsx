@@ -33,6 +33,8 @@ const providerVariant: Record<string, string> = {
   glm: "info",
   cerebras: "cyan",
   deepseek: "info",
+  gemini: "warning",
+  minimax: "purple",
   custom: "default",
 };
 
@@ -52,6 +54,8 @@ export function getProviderLabel(provider: string): string {
     glm: "GLM",
     cerebras: "Cerebras",
     deepseek: "DeepSeek",
+    gemini: "Gemini",
+    minimax: "MiniMax",
     custom: "Custom",
   };
   return labels[provider] || provider;

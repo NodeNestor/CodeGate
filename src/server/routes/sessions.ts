@@ -5,6 +5,7 @@ import {
   removeSession,
   getSessionStatus,
   importCredentials,
+  readSessionAuthUrls,
   listSessions,
 } from "../session-manager.js";
 import { createAccount, updateSession as dbUpdateSession, getAccounts, getConfigs, createConfig, setConfigTiers, activateConfig } from "../db.js";
@@ -23,7 +24,8 @@ sessions.post("/", async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const name = (body as any)?.name;
-    const session = await createTerminalSession(name);
+    const autoCommand = (body as any)?.autoCommand;
+    const session = await createTerminalSession(name, autoCommand);
     return c.json(session, 201);
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
@@ -57,6 +59,29 @@ sessions.post("/:id/stop", async (c) => {
     return c.json({ ok: true });
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
+  }
+});
+
+sessions.get("/:id/auth-urls", async (c) => {
+  try {
+    const id = c.req.param("id");
+    const urls = await readSessionAuthUrls(id);
+    return c.json({ urls });
+  } catch {
+    return c.json({ urls: [] });
+  }
+});
+
+sessions.get("/:id/check-credentials", async (c) => {
+  try {
+    const id = c.req.param("id");
+    const creds = await importCredentials(id);
+    if (creds) {
+      return c.json({ found: true, provider: creds.provider });
+    }
+    return c.json({ found: false });
+  } catch {
+    return c.json({ found: false });
   }
 });
 
