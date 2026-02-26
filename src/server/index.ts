@@ -123,30 +123,36 @@ ui.get("*", (c) => {
 </html>`);
 });
 
-// ─── Proxy App (port 9212) ──────────────────────────────────────────────────
-
-const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
-
-const proxy = new Hono();
-proxy.use("/*", cors());
-proxy.use("/*", bodyLimit({ maxSize: MAX_BODY_SIZE }));
-proxy.route("/", proxyRouter);
-
 // ─── Start servers ──────────────────────────────────────────────────────────
+
+const USE_GO_PROXY = process.env.USE_GO_PROXY === "true";
 
 console.log(`Starting CodeGate...`);
 console.log(`  UI:    http://localhost:${UI_PORT}`);
-console.log(`  Proxy: http://localhost:${PROXY_PORT}`);
 
 serve({
   fetch: ui.fetch,
   port: UI_PORT,
 });
 
-serve({
-  fetch: proxy.fetch,
-  port: PROXY_PORT,
-});
+if (USE_GO_PROXY) {
+  console.log(`  Proxy: handled by Go binary on :${PROXY_PORT}`);
+} else {
+  // ─── Proxy App (port 9212) ────────────────────────────────────────────────
+  const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
+
+  const proxy = new Hono();
+  proxy.use("/*", cors());
+  proxy.use("/*", bodyLimit({ maxSize: MAX_BODY_SIZE }));
+  proxy.route("/", proxyRouter);
+
+  console.log(`  Proxy: http://localhost:${PROXY_PORT}`);
+
+  serve({
+    fetch: proxy.fetch,
+    port: PROXY_PORT,
+  });
+}
 
 // Initialize session manager (restore active ports, restart linked sessions)
 initSessionManager().catch((err) => {
