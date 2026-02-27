@@ -1,12 +1,12 @@
 # CLAUDE.md — CodeGate Developer Guide
 
-## What is this?
+## What is CodeGate?
 
 CodeGate is a universal LLM proxy. It sits between coding agents (Claude Code, Cursor, Copilot, etc.) and LLM providers (Anthropic, OpenAI, DeepSeek, etc.), handling routing, failover, format conversion, and privacy — all through a single endpoint.
 
 **Two ports:**
-- `9211` — Web dashboard + REST API (always Node.js)
-- `9212` — LLM proxy (Go binary or Node.js, controlled by `USE_GO_PROXY` env)
+- `9211` — Web dashboard + REST API (Node.js, Hono)
+- `9212` — LLM proxy (Go binary)
 
 **One database:** SQLite in WAL mode, shared between Go and Node.js processes.
 
@@ -29,13 +29,8 @@ cd go && go test ./...      # Go tests
 # Type check
 npx tsc --noEmit
 
-# Docker build + deploy
+# Docker
 docker compose up -d --build
-
-# Docker with Go proxy
-USE_GO_PROXY=true docker compose up -d --build
-
-# Rebuild just the proxy container
 docker compose build proxy && docker compose up -d --no-deps proxy
 ```
 
@@ -45,7 +40,7 @@ docker compose build proxy && docker compose up -d --no-deps proxy
 
 ```
 codeGate/
-├── go/                        # Go proxy (high-performance, optional)
+├── go/                        # Go proxy (port 9212)
 │   ├── cmd/codegate-proxy/    # Entry point (main.go)
 │   └── internal/
 │       ├── auth/              # OAuth token refresh
@@ -61,19 +56,20 @@ codeGate/
 │       ├── routing/           # Config-based routing (4 strategies)
 │       └── tenant/            # Multi-tenant key resolution
 ├── src/
-│   ├── server/                # Node.js API + proxy
-│   │   ├── index.ts           # Hono app, both servers
+│   ├── server/                # Node.js dashboard API (port 9211)
+│   │   ├── index.ts           # Hono app, dashboard server
 │   │   ├── db.ts              # SQLite init, all queries
 │   │   ├── encryption.ts      # AES-256-GCM (accounts) + AES-256-CTR (guardrails)
 │   │   ├── config-manager.ts  # Routing config CRUD + resolution
-│   │   ├── format-converter.ts# Bidirectional Anthropic <-> OpenAI
+│   │   ├── model-mapper.ts    # Model name resolution
+│   │   ├── model-limits.ts    # Per-model token limits
+│   │   ├── model-fetcher.ts   # Model list fetching
+│   │   ├── rate-limiter.ts    # Rate limiting logic
 │   │   ├── session-manager.ts # Docker terminal sessions (ttyd)
-│   │   ├── finetune.ts        # JSONL export for fine-tuning
-│   │   ├── auth-refresh.ts    # OAuth token background loop
-│   │   ├── guardrails/        # Manager + 15 built-in guardrails
-│   │   ├── providers/         # Anthropic, OpenAI, Codex, OpenRouter, Custom
-│   │   ├── routes/            # API endpoints (accounts, configs, proxy, etc.)
-│   │   └── __tests__/         # Vitest test suites
+│   │   ├── finetune.ts        # JSONL export for fine-tuning datasets
+│   │   ├── guardrails/        # Manager, registry, builtins, patterns, types, shared, names-data
+│   │   ├── routes/            # accounts, configs, settings, sessions, setup, privacy, logs, tenants
+│   │   └── __tests__/         # model-mapper, rate-limiter, multi-tenant tests
 │   └── client/                # React 18 + Tailwind dashboard
 │       ├── App.tsx            # Router with sidebar nav
 │       ├── pages/             # Accounts, Configs, Tenants, Guardrails, Logs, Settings, Setup
@@ -82,7 +78,7 @@ codeGate/
 ├── Dockerfile                 # Multi-stage: Node.js build + Go build
 ├── Dockerfile.session         # ttyd terminal session image
 ├── docker-compose.yml         # Proxy + session-image services
-├── start.sh                   # Startup script (Go+Node or Node-only)
+├── start.sh                   # Startup script: Node.js (9211) + Go (9212)
 ├── package.json               # npm scripts, dependencies
 ├── vite.config.ts             # Frontend build config
 └── vitest.config.ts           # Test config
@@ -93,7 +89,7 @@ codeGate/
 ## Architecture at a Glance
 
 ```
-Request flow (port 9212):
+Request flow (Go proxy, port 9212):
 
   Client request
       │
@@ -154,18 +150,18 @@ Environment overrides: `ACCOUNT_KEY`, `GUARDRAIL_KEY` (derived via scrypt if set
 
 ## Providers
 
-All providers are dispatched through a common interface. Format conversion happens automatically.
+All providers are dispatched through the Go proxy. Format conversion happens automatically.
 
-| Provider | Go package | Node.js file | Auth |
-|----------|-----------|-------------|------|
-| Anthropic | `provider/anthropic.go` | `providers/anthropic.ts` | API key or OAuth |
-| OpenAI | `provider/openai.go` | `providers/openai.ts` | API key or OAuth |
-| OpenRouter | (uses openai) | `providers/openrouter.ts` | API key |
-| GLM, Cerebras, DeepSeek, Gemini, Minimax | (uses openai) | `providers/openai-compat.ts` | API key |
-| Codex (subscription) | (uses openai) | `providers/codex.ts` | OAuth |
-| Custom | (uses openai) | `providers/custom.ts` | API key |
+| Provider | Go package | Auth |
+|----------|-----------|------|
+| Anthropic | `provider/anthropic.go` | API key or OAuth |
+| OpenAI | `provider/openai.go` | API key or OAuth |
+| OpenRouter | `provider/openai.go` (OpenAI-compat) | API key |
+| GLM, Cerebras, DeepSeek, Gemini, Minimax | `provider/openai.go` (OpenAI-compat) | API key |
+| Codex (subscription) | `provider/openai.go` (OpenAI-compat) | OAuth |
+| Custom | `provider/openai.go` (OpenAI-compat) | API key |
 
-**Format conversion matrix** (Go: `internal/convert/`, Node.js: `format-converter.ts`):
+**Format conversion matrix** (Go: `internal/convert/`):
 - OpenAI client -> OpenAI provider: forward as-is, swap model
 - OpenAI client -> Anthropic provider: convert request + convert response back
 - Anthropic client -> OpenAI provider: convert request + convert response back
@@ -184,7 +180,7 @@ Toggle: `multi_tenancy` setting (true/false). When enabled:
 - Tenants can have their own: routing config, rate limit, settings overrides
 - Settings cascade: tenant setting -> global setting
 
-Tenant resolution: `go/internal/tenant/` or the `validateApiKey()` function in `src/server/routes/proxy.ts`.
+Tenant resolution: `go/internal/tenant/`
 
 ---
 
@@ -197,7 +193,7 @@ Defined in `configs` + `config_tiers` tables. Four strategies:
 3. **least-used** — Route to least-spent account this month
 4. **budget-aware** — Route to account with most remaining budget
 
-Resolution: `go/internal/routing/` or `src/server/config-manager.ts`
+Resolution: `go/internal/routing/`
 
 Each config has 3 tiers (opus/sonnet/haiku) with account assignments and optional model remapping (`target_model` field).
 
@@ -205,11 +201,25 @@ Each config has 3 tiers (opus/sonnet/haiku) with account assignments and optiona
 
 ## Guardrails (15 Built-in)
 
-Located in `go/internal/guardrails/` and `src/server/guardrails/`.
+Located in `go/internal/guardrails/` (proxy-side) and `src/server/guardrails/` (dashboard-side config).
 
 **Categories:** email, phone, ssn, credit_card, iban, ip, api_key, aws_key, jwt, private_key, url_credentials, password, name, address, passport
 
 All use deterministic AES-256-CTR encryption so the same input always produces the same anonymized token. Responses are deanonymized before returning to the client. Works with both streaming and non-streaming.
+
+---
+
+## Fine-Tune Dataset Generation
+
+The `src/server/finetune.ts` module captures request/response conversation pairs as JSONL for fine-tuning.
+
+- **Last-turn-only mode** (default): stores system prompt + last user message + assistant response per entry. Avoids massive duplication since coding sessions repeat full 200k context.
+- **Full context mode**: set `finetune_full_context=true` to store the complete conversation history.
+- **Conversation tracking**: entries include `conversation_id` and `turn_index` for ordering.
+- **Gzip compression**: export supports compressed output.
+- **Toggle**: enable via `finetune_logging` setting in dashboard.
+
+Output format: `data/finetune-export.jsonl`
 
 ---
 
@@ -221,7 +231,6 @@ All use deterministic AES-256-CTR encryption so the same input always produces t
 | `PROXY_PORT` | `9212` | Proxy port |
 | `DATA_DIR` | `./data` | Database + key files |
 | `PROXY_API_KEY` | — | Global auth key (simple mode) |
-| `USE_GO_PROXY` | `false` | Use Go binary for proxy instead of Node.js |
 | `ACCOUNT_KEY` | — | Override account encryption key |
 | `GUARDRAIL_KEY` | — | Override guardrail encryption key |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | For terminal sessions |
@@ -248,11 +257,11 @@ All use deterministic AES-256-CTR encryption so the same input always produces t
 ## Common Tasks
 
 ### Add a new provider
-1. If OpenAI-compatible: just add the provider name to the switch in `go/internal/provider/dispatch.go` and `src/server/routes/proxy.ts`
-2. If custom protocol: create a new `Forward*()` function in `go/internal/provider/` and a new provider file in `src/server/providers/`
+1. If OpenAI-compatible: add the provider name to the switch in `go/internal/provider/dispatch.go`
+2. If custom protocol: create a new `Forward*()` function in `go/internal/provider/`
 
 ### Add a new guardrail
-1. Create pattern in `go/internal/guardrails/builtin.go` (Go) or `src/server/guardrails/builtin/` (Node.js)
+1. Create pattern in `go/internal/guardrails/builtin.go`
 2. Register it in the guardrails manager/registry
 3. Add a DB migration if it needs a new settings key
 
@@ -277,15 +286,13 @@ npm test
 
 # Go
 cd go && go test ./...
-
-# Test suites:
-#   src/server/__tests__/cooldown-manager.test.ts
-#   src/server/__tests__/format-converter.test.ts
-#   src/server/__tests__/model-mapper.test.ts
-#   src/server/__tests__/multi-tenant.test.ts
-#   src/server/__tests__/rate-limiter.test.ts
-#   go/internal/*/  (tests alongside implementation)
 ```
+
+**Test suites:**
+- `src/server/__tests__/model-mapper.test.ts`
+- `src/server/__tests__/rate-limiter.test.ts`
+- `src/server/__tests__/multi-tenant.test.ts`
+- `go/internal/*/` (tests alongside implementation)
 
 ---
 
@@ -295,11 +302,8 @@ cd go && go test ./...
 # Build everything (Node.js + Go)
 docker compose build
 
-# Run with Node.js proxy (default)
+# Run
 docker compose up -d
-
-# Run with Go proxy
-USE_GO_PROXY=true docker compose up -d
 
 # View logs
 docker compose logs -f proxy
@@ -308,7 +312,7 @@ docker compose logs -f proxy
 docker compose build proxy && docker compose up -d --no-deps proxy
 ```
 
-The `start.sh` script handles dual-process orchestration when `USE_GO_PROXY=true`: Node.js serves the dashboard on 9211, Go binary serves the proxy on 9212.
+The `start.sh` script handles dual-process orchestration: Node.js serves the dashboard on 9211, the Go binary serves the proxy on 9212.
 
 ---
 
@@ -318,4 +322,4 @@ The `start.sh` script handles dual-process orchestration when `USE_GO_PROXY=true
 - **Go encryption compat:** Go reads the Node.js `.account-key` file and supports both base64 (Node.js) and hex-colon (legacy Go) encrypted value formats.
 - **SQLite WAL:** Go opens the DB read-only for queries; writes use separate short-lived connections. Don't hold write locks.
 - **Guardrail determinism:** AES-256-CTR with fixed IVs derived from content. Same input = same output. This is intentional for conversation coherence.
-- **OAuth tokens:** Stored encrypted in the DB. Background refresh loop runs every 15 minutes. The Go proxy also syncs from Claude credential files on disk.
+- **OAuth tokens:** Stored encrypted in the DB. Background refresh loop runs every 15 minutes in the Go proxy. Also syncs from Claude credential files on disk.

@@ -9,8 +9,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${CLAUDE_DIR:-~/.claude}:/host-claude-rw
     environment:
-      - PROXY_API_KEY=${PROXY_API_KEY:-proxy-local-key}
-      - USE_GO_PROXY=${USE_GO_PROXY:-true}
+      - PROXY_API_KEY=${PROXY_API_KEY:-}
       - UI_PORT=9211
       - PROXY_PORT=9212
       - DOCKER_SOCKET=/var/run/docker.sock
