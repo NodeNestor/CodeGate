@@ -9,4 +9,3 @@ data/
 
 # Go
 bin/codegate-proxy*
-go/go.sum
