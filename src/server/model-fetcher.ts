@@ -171,9 +171,27 @@ function prettifyModelName(id: string, provider: string): string {
  * These are fetched from the API at https://docs.anthropic.com/en/docs/about-claude/models
  * and updated periodically. If the live API works, these are ignored.
  */
-// No hardcoded fallback models — only show what the provider's API actually returns.
-// If a provider's /models endpoint doesn't work, use "Enter custom model ID" in the UI.
-const FALLBACK_MODELS: Record<string, FetchedModel[]> = {};
+// Fallback models for providers that don't have a /models endpoint.
+// Z.AI (GLM) has no model listing API — models sourced from their OpenAPI spec.
+const FALLBACK_MODELS: Record<string, FetchedModel[]> = {
+  glm: [
+    { id: "glm-5", name: "GLM 5", provider: "glm" },
+    { id: "glm-4.7", name: "GLM 4.7", provider: "glm" },
+    { id: "glm-4.7-flash", name: "GLM 4.7 Flash", provider: "glm" },
+    { id: "glm-4.7-flashx", name: "GLM 4.7 FlashX", provider: "glm" },
+    { id: "glm-4.6", name: "GLM 4.6", provider: "glm" },
+    { id: "glm-4.5", name: "GLM 4.5", provider: "glm" },
+    { id: "glm-4.5-air", name: "GLM 4.5 Air", provider: "glm" },
+    { id: "glm-4.5-airx", name: "GLM 4.5 AirX", provider: "glm" },
+    { id: "glm-4.5-flash", name: "GLM 4.5 Flash", provider: "glm" },
+    { id: "glm-4.5-x", name: "GLM 4.5 X", provider: "glm" },
+    { id: "glm-4-32b-0414-128k", name: "GLM 4 32B 128K", provider: "glm" },
+    { id: "glm-4.6v", name: "GLM 4.6V (Vision)", provider: "glm" },
+    { id: "glm-4.5v", name: "GLM 4.5V (Vision)", provider: "glm" },
+    { id: "glm-4.6v-flash", name: "GLM 4.6V Flash", provider: "glm" },
+    { id: "glm-4.6v-flashx", name: "GLM 4.6V FlashX", provider: "glm" },
+  ],
+};
 
 /** Filter out internal/system models that aren't useful for routing. */
 function isUsableModel(id: string, provider: string): boolean {
