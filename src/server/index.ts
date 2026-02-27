@@ -2,7 +2,6 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { bodyLimit } from "hono/body-limit";
 import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
@@ -13,11 +12,9 @@ import configsRouter from "./routes/configs.js";
 import settingsRouter from "./routes/settings.js";
 import sessionsRouter from "./routes/sessions.js";
 import setupRouter from "./routes/setup.js";
-import proxyRouter from "./routes/proxy.js";
 import privacyRouter, { guardrailsRouter } from "./routes/privacy.js";
 import logsRouter from "./routes/logs.js";
 import tenantsRouter from "./routes/tenants.js";
-import { startTokenRefreshLoop } from "./auth-refresh.js";
 import { initGuardrails } from "./guardrails/manager.js";
 import { initSessionManager } from "./session-manager.js";
 import { initModelLimitsTable } from "./model-limits.js";
@@ -125,42 +122,19 @@ ui.get("*", (c) => {
 
 // ─── Start servers ──────────────────────────────────────────────────────────
 
-const USE_GO_PROXY = process.env.USE_GO_PROXY === "true";
-
 console.log(`Starting CodeGate...`);
 console.log(`  UI:    http://localhost:${UI_PORT}`);
+console.log(`  Proxy: handled by Go binary on :${PROXY_PORT}`);
 
 serve({
   fetch: ui.fetch,
   port: UI_PORT,
 });
 
-if (USE_GO_PROXY) {
-  console.log(`  Proxy: handled by Go binary on :${PROXY_PORT}`);
-} else {
-  // ─── Proxy App (port 9212) ────────────────────────────────────────────────
-  const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
-
-  const proxy = new Hono();
-  proxy.use("/*", cors());
-  proxy.use("/*", bodyLimit({ maxSize: MAX_BODY_SIZE }));
-  proxy.route("/", proxyRouter);
-
-  console.log(`  Proxy: http://localhost:${PROXY_PORT}`);
-
-  serve({
-    fetch: proxy.fetch,
-    port: PROXY_PORT,
-  });
-}
-
 // Initialize session manager (restore active ports, restart linked sessions)
 initSessionManager().catch((err) => {
   console.error("[sessions] Init failed:", err);
 });
-
-// Start background OAuth token refresh loop (every 15 minutes)
-startTokenRefreshLoop();
 
 // Start automatic log retention cleanup (deletes logs older than 30 days, runs every 6 hours)
 startLogRetentionCleanup();

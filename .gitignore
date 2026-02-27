@@ -3,6 +3,8 @@ dist/
 data/
 *.db
 .master-key
+.account-key
+.guardrail-key
 .env
 
 # Go

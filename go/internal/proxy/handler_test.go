@@ -81,14 +81,6 @@ func TestToAnthropicError(t *testing.T) {
 	}
 }
 
-func TestValidateAPIKey_NoKeySet(t *testing.T) {
-	// When PROXY_API_KEY is not set, all requests should pass
-	req := httptest.NewRequest("GET", "/v1/messages", nil)
-	if !validateAPIKey(req) {
-		t.Error("should pass when no proxy key configured")
-	}
-}
-
 func TestCORSPreflight(t *testing.T) {
 	handler := Handler()
 
