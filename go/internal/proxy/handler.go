@@ -384,6 +384,15 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 			responseStream.Close()
 
+			// Read token counts from atomic usage (populated during streaming)
+			var inputTok, outputTok, cacheReadTok, cacheWriteTok int
+			if provResp.Usage != nil {
+				inputTok = int(provResp.Usage.InputTokens.Load())
+				outputTok = int(provResp.Usage.OutputTokens.Load())
+				cacheReadTok = int(provResp.Usage.CacheReadTokens.Load())
+				cacheWriteTok = int(provResp.Usage.CacheWriteTokens.Load())
+			}
+
 			// Record usage async
 			latencyMs := int(time.Since(startTime).Milliseconds())
 			tenantIDForLog := ""
@@ -391,13 +400,13 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 				tenantIDForLog = tenantCtx.ID
 			}
 			go func() {
-				costUSD := models.EstimateCost(targetModel, provResp.InputTokens, provResp.OutputTokens)
+				costUSD := models.EstimateCost(targetModel, inputTok, outputTok)
 				db.RecordUsage(account.ID, route.ConfigID, string(tier), originalModel, targetModel,
-					provResp.InputTokens, provResp.OutputTokens, provResp.CacheReadTokens, provResp.CacheWriteTokens, costUSD, tenantIDForLog)
+					inputTok, outputTok, cacheReadTok, cacheWriteTok, costUSD, tenantIDForLog)
 
 				if getSetting("request_logging") == "true" {
 					db.InsertRequestLog(method, path, inboundFormat, account.ID, account.Name, account.Provider,
-						originalModel, targetModel, provResp.Status, provResp.InputTokens, provResp.OutputTokens,
+						originalModel, targetModel, provResp.Status, inputTok, outputTok,
 						latencyMs, true, isFailover, "", tenantIDForLog)
 				}
 			}()
@@ -613,21 +622,6 @@ func deepCopy(m map[string]any) map[string]any {
 	return result
 }
 
-func validateAPIKey(r *http.Request) bool {
-	proxyKey := getEnvDefault("PROXY_API_KEY", "")
-	if proxyKey == "" {
-		return true
-	}
-
-	xAPIKey := r.Header.Get("X-Api-Key")
-	authHeader := r.Header.Get("Authorization")
-	bearerToken := ""
-	if strings.HasPrefix(authHeader, "Bearer ") {
-		bearerToken = authHeader[7:]
-	}
-
-	return xAPIKey == proxyKey || bearerToken == proxyKey
-}
 
 func writeError(w http.ResponseWriter, r *http.Request, inboundFormat string, status int, errType, message string) {
 	w.Header().Set("Content-Type", "application/json")
