@@ -139,8 +139,8 @@ export default function AccountCard({
           </div>
         )}
 
-        {/* Last error */}
-        {account.last_error && (
+        {/* Last error — only show if account is currently in error/expired state */}
+        {account.last_error && account.status !== "active" && (
           <div className="flex items-start gap-2 text-red-400/80">
             <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
             <span className="truncate text-xs" title={account.last_error}>
