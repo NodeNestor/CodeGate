@@ -856,7 +856,7 @@ func ConvertSSEStream(reader io.Reader, originalModel string) io.ReadCloser {
 				writeSSE(pw, "message_delta", map[string]any{
 					"type":  "message_delta",
 					"delta": map[string]any{"stop_reason": stopReason, "stop_sequence": nil},
-					"usage": map[string]any{"output_tokens": outputTokens},
+					"usage": map[string]any{"input_tokens": inputTokens, "output_tokens": outputTokens},
 				})
 
 				writeSSE(pw, "message_stop", map[string]any{"type": "message_stop"})
