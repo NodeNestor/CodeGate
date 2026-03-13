@@ -265,7 +265,7 @@ func UpdateAccountStatus(accountID, status, errMsg string) {
 }
 
 // InsertRequestLog inserts a request log entry.
-func InsertRequestLog(method, path, inboundFormat, accountID, accountName, provider, originalModel, routedModel string, statusCode, inputTokens, outputTokens, latencyMs int, isStream, isFailover bool, errorMessage string, tenantID ...string) {
+func InsertRequestLog(method, path, inboundFormat, accountID, accountName, provider, originalModel, routedModel string, statusCode, inputTokens, outputTokens, latencyMs int, isStream, isFailover bool, errorMessage, requestBody, responseBody string, tenantID ...string) {
 	streamInt, failoverInt := 0, 0
 	if isStream {
 		streamInt = 1
@@ -277,8 +277,8 @@ func InsertRequestLog(method, path, inboundFormat, accountID, accountName, provi
 	if len(tenantID) > 0 {
 		tid = tenantID[0]
 	}
-	writeExec(`INSERT INTO request_logs (id, method, path, inbound_format, account_id, account_name, provider, original_model, routed_model, status_code, input_tokens, output_tokens, latency_ms, is_stream, is_failover, error_message, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		generateID(), method, path, inboundFormat, accountID, accountName, provider, originalModel, routedModel, statusCode, inputTokens, outputTokens, latencyMs, streamInt, failoverInt, nullStr(errorMessage), nullStr(tid))
+	writeExec(`INSERT INTO request_logs (id, method, path, inbound_format, account_id, account_name, provider, original_model, routed_model, status_code, input_tokens, output_tokens, latency_ms, is_stream, is_failover, error_message, request_body, response_body, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		generateID(), method, path, inboundFormat, accountID, accountName, provider, originalModel, routedModel, statusCode, inputTokens, outputTokens, latencyMs, streamInt, failoverInt, nullStr(errorMessage), nullStr(requestBody), nullStr(responseBody), nullStr(tid))
 }
 
 // TenantRow represents a tenant from the database.

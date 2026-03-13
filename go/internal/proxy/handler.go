@@ -405,9 +405,13 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 					inputTok, outputTok, cacheReadTok, cacheWriteTok, costUSD, tenantIDForLog)
 
 				if getSetting("request_logging") == "true" {
+					reqBody, respBody := "", ""
+					if getSetting("detailed_request_logging") == "true" {
+						reqBody = string(bodyBytes)
+					}
 					db.InsertRequestLog(method, path, inboundFormat, account.ID, account.Name, account.Provider,
 						originalModel, targetModel, provResp.Status, inputTok, outputTok,
-						latencyMs, true, isFailover, "", tenantIDForLog)
+						latencyMs, true, isFailover, "", reqBody, respBody, tenantIDForLog)
 				}
 			}()
 
@@ -537,9 +541,14 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 						errMessage = responseBodyStr
 					}
 				}
+				reqBody, respBody := "", ""
+				if getSetting("detailed_request_logging") == "true" {
+					reqBody = string(bodyBytes)
+					respBody = responseBodyStr
+				}
 				db.InsertRequestLog(method, path, inboundFormat, account.ID, account.Name, account.Provider,
 					originalModel, targetModel, provResp.Status, provResp.InputTokens, provResp.OutputTokens,
-					latencyMs, false, isFailover, errMessage, tenantIDForLog2)
+					latencyMs, false, isFailover, errMessage, reqBody, respBody, tenantIDForLog2)
 			}
 		}()
 
